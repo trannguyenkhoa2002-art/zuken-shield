@@ -42,7 +42,9 @@ trước**. Nó không chứng minh máy an toàn, cũng không chứng minh má
 | `shield-privileged` | root | Bề mặt RPC tối thiểu cho firewall và dừng tiến trình |
 | `shield` (UI) | user thường | Giao diện PySide6, nói chuyện qua Unix socket cục bộ |
 
-Agent cần root để bắt gói tin, đọc một số log và thực thi phản ứng hệ thống.
+Agent cần root để thu thập telemetry nhân, đọc một số log và thực thi phản ứng
+hệ thống. Việc bắt gói tin là tuỳ chọn và chạy trong dịch vụ riêng
+`shield-packet-collector` với bộ capability hạn chế.
 **Không chạy UI bằng `sudo`.** Lúc cài, user desktop được thêm vào group `shield`
 để truy cập được `/run/shield/shield.sock`.
 

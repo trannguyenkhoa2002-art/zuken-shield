@@ -23,7 +23,9 @@ it can perform DNS lookups as part of monitoring.
 
 ### Does it need root?
 
-The agent does, for kernel telemetry and packet capture. The desktop interface
+The agent does, for kernel telemetry and other privileged host observations —
+optional packet capture runs in its own `shield-packet-collector` service with a
+restricted capability set. The desktop interface
 runs as your normal user and talks to the agent over a Unix socket. Actions that
 change system state go through a separate privileged helper with a fixed
 operation set, so the agent never runs arbitrary commands.

@@ -57,9 +57,10 @@ The agent pings the systemd watchdog only when the event loop is running *and*
 the database answers, so a ping failure is a real stall rather than a formality.
 Database maintenance is bounded per pass specifically so it cannot cause this.
 
-Restarts around boot have been observed on the development machine and are still
-under investigation; see `../CHANGELOG.md`. If you see them, the journal lines
-immediately before the timeout are the useful evidence.
+Restarts around cold boot were caused by a watchdog timing defect that is fixed
+in Beta 1.0 — the first ping now happens as soon as the store answers, instead of
+after a full interval. See `../CHANGELOG.md`. If you still see a timeout, the
+journal lines immediately before it are the useful evidence.
 
 ## The database is growing
 

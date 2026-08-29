@@ -81,9 +81,9 @@ First public release.
 - Detection thresholds are tuned against one real environment.
 - Response actions beyond `block_ip` have had limited real-world exercise.
 - Interface is Vietnamese and English only.
-- On the development machine, the agent has occasionally been restarted by the
-  systemd watchdog around boot. The cause is not the database maintenance path,
-  which was measured and bounded in this release; it remains under
-  investigation.
+- The startup watchdog timing defect that restarted the agent around cold boot
+  was identified and fixed in this release. It is verified across repeated
+  service starts and a real cold boot with zero watchdog timeouts, but not yet
+  over a long-duration soak.
 - No language model is used by any feature. The isolated worker infrastructure
   is present but dormant; see the release notes for why.

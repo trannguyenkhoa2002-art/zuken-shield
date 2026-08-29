@@ -8,8 +8,13 @@ must be resolved, not merely acknowledged.
 - [x] Full unprivileged test suite passes (2225 passed, 35 skipped, 0 failed)
 - [x] Export tree verified independently of the development checkout
 - [x] Package builds from the export
-- [ ] Package built from the export installed into a clean machine or VM
+- [x] Package built from the export installed into a clean machine or VM
 - [x] No build caches, virtualenvs, or coverage output in the export
+- [x] Startup watchdog timing defect fixed and verified: 16 clean service
+      starts, `NRestarts=0`, and a real cold boot with `Result=success` and
+      zero watchdog timeouts for that boot
+- [x] Public export scrubbed of private data and pushed to the private
+      GitHub repository
 
 ## Secrets and private data
 
@@ -41,22 +46,25 @@ must be resolved, not merely acknowledged.
 
 - [x] `README.md` claims verified against implementation
 - [x] AI described accurately — dormant, unused, and not marketed
-- [x] Known limitations stated, including the unresolved watchdog restarts
-- [x] `SECURITY.md` with a private reporting route and no fabricated contact
+- [x] Known limitations stated, including the fixed startup watchdog defect
+- [x] `SECURITY.md` with a private reporting route and no fabricated contact,
+      stating plainly that the route is not yet enabled
 - [x] `DISCLAIMER.md` covering authorised use
 - [x] `CONTRIBUTING.md` with real commands and the architecture invariants
 - [x] Testing and demo guides use benign actions only
-- [ ] Installation instructions followed on a clean machine
+- [x] Installation instructions followed on a clean machine
 - [ ] Quick start followed on a clean machine
 - [ ] Internal links checked after the repository name is known
 
 ## Repository configuration
 
-- [ ] **Enable private vulnerability reporting** (Settings → Code security →
-      Private vulnerability reporting) — `SECURITY.md` points at it
+- [ ] **blocker** Enable private vulnerability reporting (Settings → Code
+      security → Private vulnerability reporting) — `SECURITY.md` points at it
+      and currently states it is not enabled
 - [ ] Repository description and topics set (see the release report)
 - [ ] Default branch chosen and protected
-- [ ] Visibility change made deliberately, not incidentally
+- [ ] **blocker** Visibility change made deliberately, not incidentally, after
+      a final visual review of the private repository
 - [ ] First release tagged and titled
 
 ## Screenshots
@@ -67,6 +75,6 @@ must be resolved, not merely acknowledged.
 
 ## Final
 
-- [ ] `git status` clean in the export
+- [x] `git status` clean in the export
 - [ ] A person other than the author has read `README.md` end to end
 - [ ] The licence question has an answer written down

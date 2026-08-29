@@ -13,14 +13,14 @@ These are the gaps that keep Beta 1.0 a beta.
   package maintainer scripts.
 - **Soak testing** at 24 hours, 72 hours, 7 days, and 30 days on the packaged
   build, with memory, database growth, and event-loop latency recorded.
-- **Resolve the startup watchdog restarts** observed on the development machine.
-  The database maintenance path was measured and bounded in Beta 1.0 and is not
-  the cause; the remaining trigger is unidentified.
-- **Settle the scapy position** described in `NOTICE`. The PyQt6 (GPL-3.0)
-  dependency was removed by migrating the interface to PySide6 under LGPL-3.0.
-  What remains is scapy (GPL-2.0), imported by four packet-capture collectors,
-  not vendored and not bundled. Either accept it as a system dependency, or move
-  those collectors behind a process boundary as `probe/` already demonstrates.
+- **Confirm the startup watchdog fix over time.** The timing defect was found
+  and fixed in Beta 1.0 and verified across repeated starts and a real cold
+  boot; what is still missing is the same evidence over a long-duration soak.
+- **Review the packet helper's own licence position**, as `NOTICE` records. The
+  PyQt6 (GPL-3.0) dependency was removed by migrating the interface to PySide6
+  under LGPL-3.0, and scapy (GPL-2.0) was moved out of the core into the
+  separate `shield-packet-collector` program and process. What remains is a
+  maintainer decision about distributing that helper.
 - **Database restore and package rollback** validated on every supported release.
 
 ## Detection

@@ -42,7 +42,9 @@ and it does not prove a host is compromised.
 | `shield-privileged` | root | Minimal RPC surface for firewall and process response |
 | `shield` (UI) | normal user | PySide6 interface over a local Unix socket |
 
-The agent needs root for packet capture, selected logs and system response.
+The agent needs root for kernel telemetry, selected logs and system response.
+Optional packet capture runs in the separate `shield-packet-collector` service
+with a restricted capability set.
 **Do not launch the UI with `sudo`.** Installation adds the desktop user to the
 `shield` group, which grants access to `/run/shield/shield.sock`.
 

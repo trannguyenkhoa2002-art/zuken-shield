@@ -7,8 +7,8 @@
 | Beta 1.0 (package 3.0.0a2) | Yes |
 | Everything earlier | No |
 
-Beta 1.0 is the first public release. Earlier internal versions were never
-published and receive no fixes.
+Beta 1.0 is the first release published from this repository. Earlier internal
+versions were never published and receive no fixes.
 
 ## Reporting a vulnerability
 
@@ -18,11 +18,14 @@ Report privately through **GitHub Security Advisories**: go to the repository's
 **Security** tab and choose **Report a vulnerability**. This creates a private
 advisory visible only to you and the maintainers.
 
-> **Maintainer: before publishing this repository, enable private vulnerability
-> reporting** (Settings → Code security and analysis → Private vulnerability
-> reporting). If you also want to offer an email address, replace this
-> paragraph with it. This file deliberately contains no email address, because a
-> security contact that does not exist is worse than none.
+> **Status:** private vulnerability reporting is **not yet enabled** on this
+> repository. It should be enabled in GitHub repository settings (Settings →
+> Code security → Private vulnerability reporting) before public visibility, so
+> that the route described above exists when the first report arrives. Until
+> then, do not use public Issues for a security report — wait, or contact a
+> maintainer through the repository's own channels. This file deliberately
+> contains no email address, because a security contact that does not exist is
+> worse than none.
 
 ### What to include
 

@@ -67,6 +67,43 @@ better model can be evaluated later against the criteria in `../ROADMAP.md`.
 **Shield is therefore not an AI product, and this release does not market itself
 as one.**
 
+## Fixed in this release
+
+**Startup watchdog timing defect.** `shield-agent` uses `Type=simple`, so
+systemd counts `WatchdogSec` from service start rather than from `READY=1`. The
+watchdog loop slept a full interval before its first ping, making the real
+deadline `startup time + interval`. A measured cold start of 46.0 s plus the
+45 s interval exceeded the 90 s limit by one second, so the agent was killed by
+the watchdog on cold boot only — which is why the symptom looked random for
+weeks.
+
+The fix sends the first `WATCHDOG=1` immediately after the store-health check
+succeeds, before the first sleep. The ping is still conditional on the event
+loop running and the database answering, so it proves liveness rather than mere
+process existence. `WatchdogSec` was not raised; a test enforces both the early
+ping and the fact that the limit was not simply loosened.
+
+Verified by 16 clean service starts with `NRestarts=0` and no watchdog kills,
+then a real cold reboot: `shield-agent` active, `Result=success`, `NRestarts=0`,
+and a current-boot watchdog-timeout count of zero.
+
+## Other changes in this release
+
+- **Interface migrated from PyQt6 to PySide6.** PyQt6 is offered only under
+  GPL-3.0 or a commercial licence; PySide6 and Qt 6 are used under their
+  LGPL-3.0 option, with no bundling and no static linking.
+- **Packet capture separated from the core.** The scapy (GPL-2.0) dependency
+  now lives in the optional `shield-packet-collector` — its own program,
+  package, process, and systemd unit, running with `CAP_NET_RAW` and
+  `CAP_NET_ADMIN` only. It feeds the core newline-delimited JSON over a Unix
+  socket against a closed schema, and the core treats it as untrusted input.
+- **A core-only install no longer depends on scapy.** An AST scan over the whole
+  core runs in the test suite and fails if a scapy import appears. Without the
+  helper, Shield reports the affected capabilities as unavailable rather than
+  failing.
+- **All five guided Q&A intents are deterministic**, and no language model is
+  required or started by any feature in Beta 1.0.
+
 ## Verification
 
 At release:
@@ -88,18 +125,20 @@ The full list is in `../README.md`. The ones most likely to matter:
   reduced, and Shield reports the reduction rather than hiding it.
 - Detection thresholds were tuned against one real environment.
 - Response actions beyond `block_ip` have had limited real-world exercise.
-- On the development machine, the agent has occasionally been restarted by the
-  systemd watchdog around boot. The database maintenance path — the previous
-  cause of exactly this symptom — was measured and bounded in this release and
-  is not responsible. The remaining trigger is unidentified and is recorded here
-  rather than omitted.
+- The startup watchdog defect described above is fixed and verified, but the
+  verification is repeated starts and one real cold boot — not long-duration
+  soak testing.
 
 ## Licensing
 
-The source is offered under Apache-2.0. **The licence of the distributed
-combination is an open question**: the interface depends on PyQt6 (GPL-3.0) and
-the agent on scapy (partly GPL-2.0). `../NOTICE` states the problem and the
-available options. Resolve it before redistributing binaries.
+The source is offered under Apache-2.0. The interface uses the
+system-provided PySide6 and Qt 6 packages under their LGPL-3.0 option; Shield
+bundles and statically links neither. scapy (GPL-2.0) is no longer a core
+dependency — it belongs to the optional `shield-packet-collector`, a separate
+program and process. `../NOTICE` records the dependency list, the LGPL-3.0
+obligations, and the packet-helper boundary, and states plainly that the
+separation is architectural rather than a legal conclusion. The helper's own
+licence position still needs review by whoever distributes it.
 
 ## Upgrading
 

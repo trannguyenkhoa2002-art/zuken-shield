@@ -10,7 +10,9 @@
   distribution-only install the package is built around.
 - Python 3.10 or newer
 - systemd
-- `sudo`/root access — the agent needs it for kernel telemetry and packet capture
+- `sudo`/root access — the agent needs it for kernel telemetry and other
+  privileged host observations; optional packet capture runs in the separate
+  `shield-packet-collector` service
 - x86-64 (the package is built for `amd64`)
 
 Optional but recommended:

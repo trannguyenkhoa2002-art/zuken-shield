@@ -178,8 +178,16 @@ walkthroughs from telemetry to incident report.
 
 ## Security model
 
-- The **agent** runs as root because kernel telemetry and packet capture require
-  it. It is confined by systemd (`MemoryMax=1G`, restricted capabilities).
+- The **agent** runs as root for kernel telemetry and other privileged host
+  observations. It is confined by systemd (`MemoryMax=1G`, restricted
+  capabilities), and it imports no packet-capture library.
+- **Packet capture is optional and lives outside the agent.** It runs in the
+  separate `shield-packet-collector` service, with a restricted capability set
+  (`CAP_NET_RAW` and `CAP_NET_ADMIN` only), and feeds the core newline-delimited
+  JSON over a Unix socket. The core validates every message against a closed
+  schema and treats the helper as untrusted input. If the helper is absent or
+  fails, the core keeps running and reports the affected capabilities as
+  unavailable.
 - The **privileged helper** is a separate service exposing a small, fixed set of
   operations over a Unix socket. The agent cannot run arbitrary commands.
 - The **interface** runs as your user and talks to the agent over a Unix socket
@@ -208,9 +216,10 @@ More: `docs/SECURITY_MODEL.md` and `docs/PRIVACY.md`.
 - The interface is Vietnamese and English only.
 - Response actions beyond `block_ip` have had limited real-world exercise.
 - Some scenarios are deterministic-report-only by design.
-- On the developer's machine the agent has occasionally been restarted by the
-  systemd watchdog around boot; this is under investigation and is recorded in
-  the release notes rather than omitted.
+- A startup watchdog timing defect was identified during Beta 1.0 testing and
+  fixed. The fix was verified across repeated service starts and a real cold
+  boot with zero watchdog timeouts. That is evidence, not long-duration soak
+  testing; see `docs/RELEASE_NOTES_BETA_1.0.md`.
 
 ## Roadmap
 
@@ -226,14 +235,15 @@ be backed by code and a test.
 
 Apache License 2.0 — see `LICENSE`.
 
-The interface uses PySide6 and Qt 6 under the **LGPL-3.0** option, which an
-Apache-2.0 application may do. Shield bundles no Qt libraries; they are ordinary
-system packages you can replace.
+Shield uses the system-provided PySide6 and Qt 6 packages under their
+**LGPL-3.0** licensing option. Shield does not bundle or statically link Qt
+libraries; they are ordinary system packages you can upgrade or replace.
 
-Packet capture — the one component that needs GPL-2.0 scapy — is a **separate
-optional package**, `shield-packet-collector`, running as its own program in its
-own process. The core imports no GPL library, and a test enforces that. See
-`NOTICE` for the details and for what that separation does and does not claim.
+Packet capture — the one component that needs GPL-2.0 scapy — ships as a
+separate optional package, `shield-packet-collector`, running as its own program
+in its own process. The core imports no GPL-licensed library, and a test in the
+suite enforces that. See `NOTICE` for dependency and distribution details, and
+for what that separation does and does not claim.
 
 ## Optional: packet capture
 
