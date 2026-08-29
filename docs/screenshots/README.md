@@ -1,18 +1,21 @@
 # Screenshots
 
-These are renders of the **real** Shield interface — the shipped PySide6 widgets,
-the shipped report builder, the shipped guided-Q&A router, and the shipped
-evidence query layer. Nothing here is a mockup, a drawing, or an edited image.
+**This directory holds no images, and Beta 1.0 does not need any.** The public
+`README.md` deliberately carries no screenshots: the release stands on the
+product description, the architecture, and the documentation. Nothing here is a
+blocker.
 
-**The data behind them is a synthetic lab dataset, not a production host.** The
-database was seeded through Shield's own pipeline — events, alerts, the
-correlation engine, the incident store, and the response job state machine — so
-every incident, report section, answer, and state transition on screen was
-computed by Shield rather than typed into a picture. What is not real is the
-network: addresses come from the RFC 5737 documentation range `192.0.2.0/24`,
-MAC addresses from the IANA documentation range `00:00:5E:00:53:xx`, and the
-device names are lab fixtures. No collectors were running against a real host,
-and no packet capture, nftables rule, or privileged action was executed.
+This file stays as the specification for whoever captures a set later — what to
+capture, and what must be scrubbed first. A set was captured during the Beta 1.0
+review and then removed from the repository along with the README section that
+referenced it; the notes below are what that exercise established.
+
+**If you capture screenshots, do not photograph a production host.** Seed a
+synthetic lab database through Shield's own pipeline instead, so the incidents,
+report sections, answers and state transitions on screen are genuinely computed
+by Shield rather than typed into a picture, while the network behind them is
+fictional: RFC 5737 `192.0.2.0/24` addresses, IANA documentation MACs
+(`00:00:5E:00:53:xx`), and lab device names.
 
 ## The set
 
@@ -27,7 +30,8 @@ and no packet capture, nftables rule, or privileged action was executed.
 | 7 | `response.png` | Response | a proposed and a verified action, with state history and post-verification evidence |
 | 8 | `health.png` | Security Center | collector health, MITRE coverage, and Shield's own health |
 
-Five of these are used in `../../README.md`; all eight are listed here.
+Eight covers the feature set; five would be enough for any page that wants
+them. Nothing in the project links to these filenames today.
 
 ## Scrub before uploading
 
@@ -54,10 +58,11 @@ redacted screenshot still leaks layout and counts.
 - PNG, captured at a normal window size — do not scale up
 - Light or dark theme consistently across the set
 - English interface for the primary set; a Vietnamese one is welcome as an extra
-- Reference from `README.md` as `docs/screenshots/<file>.png` once present
+- If some page is later to show them, reference them as
+  `docs/screenshots/<file>.png` — nothing does today
 
 ## Before adding or replacing any image here
 
 Confirm the checklist item in `../PUBLIC_RELEASE_CHECKLIST.md`, and have someone
-other than the person who captured it look at each image. If you re-capture,
-keep the filenames — `../../README.md` links to them directly.
+other than the person who captured it look at each image. Keep the filenames
+above so this specification stays accurate.

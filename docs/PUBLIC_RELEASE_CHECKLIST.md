@@ -70,13 +70,9 @@ must be resolved, not merely acknowledged.
 
 ## Screenshots
 
-- [x] Captured per `screenshots/README.md` — eight screens, real interface,
-      synthetic lab dataset
-- [x] Hostnames, addresses, MACs, usernames, and file paths scrubbed: RFC 5737
-      `192.0.2.0/24`, IANA documentation MACs, lab device names, no home paths,
-      no PNG text metadata
-- [x] Five representative screenshots referenced from `README.md`
-- [ ] Reviewed by a second pair of eyes before public visibility
+**Not required for Beta 1.0.** The README carries no screenshots and links to
+none; `docs/screenshots/README.md` remains as a specification for a later set.
+Nothing in this group blocks release.
 
 ## Final
 

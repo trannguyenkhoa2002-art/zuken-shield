@@ -60,7 +60,10 @@ against detection rules, and preserves the evidence behind every conclusion.
 
 - It is **not** an exploitation framework, a penetration-testing engine, or an
   offensive agent.
-- It is **not** a vulnerability scanner. It observes; it does not probe you.
+- It is **not** a vulnerability scanner and it does not exploit anything.
+  Most of what it does is passive observation, but some discovery features
+  actively query the local network — `arp-scan`, `nmap -sn` for liveness, and
+  `nmap -sV` for service banners on hosts you have marked trusted.
 - It is **not** antivirus and it does not remove malware.
 - It is **not** a SIEM. It monitors one host and its local network, not a fleet.
 - It does **not** send anything off the machine. There is no cloud service, no
@@ -103,37 +106,6 @@ anything.**
 Shield is a single-host tool. It is useful for learning, for lab validation, and
 for watching one machine you care about. It is not a fleet product.
 
-## What it looks like
-
-Renders of the real interface against a **synthetic lab dataset** — addresses
-from the documentation ranges, no production host. Every incident, report section and answer
-on screen was computed by Shield's own pipeline. Full set and capture notes:
-`docs/screenshots/README.md`.
-
-**Overview** — posture, devices online, live activity.
-
-![Overview](docs/screenshots/overview.png)
-
-**Deterministic incident report** — fixed sections built only from measured
-data, with evidence references you can open.
-
-![Incident report](docs/screenshots/incident-report.png)
-
-**Guided incident Q&A** — five closed questions, answered from the report
-without a model.
-
-![Guided Q&A](docs/screenshots/guided-qa.png)
-
-**Expert Evidence** — the bounded, audited read path for checking Shield's
-conclusions yourself.
-
-![Expert Evidence](docs/screenshots/expert-evidence.png)
-
-**Security Center** — collector health, ATT&CK coverage, and Shield's own
-health.
-
-![Security Center](docs/screenshots/health.png)
-
 ## Architecture overview
 
 ```mermaid
@@ -160,9 +132,10 @@ Full detail, including the IPC boundary and the dormant AI path, is in
 - **Ubuntu 26.04 LTS or newer** for the packaged install. This is not a
   preference: the interface needs PySide6, and `python3-pyside6.*` first appears
   in Ubuntu 26.04. Ubuntu 24.04 ships only PySide2 (Qt 5), so the `.deb`
-  dependencies cannot be satisfied there. On 24.04 you can still run from a
-  source checkout with `pip install PySide6`, but that gives up the offline,
-  distribution-only install the package is built around.
+  dependencies cannot be satisfied there. Running from a source checkout with
+  `pip install PySide6` may be possible on 24.04, but that path has not been
+  verified on a clean machine and gives up the offline, distribution-only
+  install the package is built around.
 - Python 3.10 or newer
 - systemd (Shield ships as system services)
 - root privileges for the agent; the desktop interface runs as your user
