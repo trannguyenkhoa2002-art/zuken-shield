@@ -59,9 +59,10 @@ must be resolved, not merely acknowledged.
 ## Repository configuration
 
 - [ ] **blocker** Enable private vulnerability reporting (Settings → Code
-      security → Private vulnerability reporting) — `SECURITY.md` points at it
-      and currently states it is not enabled
-- [ ] Repository description and topics set (see the release report)
+      security → Private vulnerability reporting) — not available while the
+      repository is private, so do it in the same sitting as the visibility
+      change; `SECURITY.md` documents that sequencing
+- [x] Repository description and topics set (13 topics applied)
 - [ ] Default branch chosen and protected
 - [ ] **blocker** Visibility change made deliberately, not incidentally, after
       a final visual review of the private repository

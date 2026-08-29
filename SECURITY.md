@@ -18,14 +18,17 @@ Report privately through **GitHub Security Advisories**: go to the repository's
 **Security** tab and choose **Report a vulnerability**. This creates a private
 advisory visible only to you and the maintainers.
 
-> **Status:** private vulnerability reporting is **not yet enabled** on this
-> repository. It should be enabled in GitHub repository settings (Settings →
-> Code security → Private vulnerability reporting) before public visibility, so
-> that the route described above exists when the first report arrives. Until
-> then, do not use public Issues for a security report — wait, or contact a
-> maintainer through the repository's own channels. This file deliberately
-> contains no email address, because a security contact that does not exist is
-> worse than none.
+> **Status:** private vulnerability reporting is **not enabled yet**, and while
+> this repository is private it cannot be — the setting is not offered here, and
+> GitHub's API reports the feature as absent rather than merely switched off.
+> The route described above therefore starts working only once the repository is
+> public. **Enable it in the same sitting as the visibility change** (Settings →
+> Code security → Private vulnerability reporting), so there is no window in
+> which the repository is readable but this file describes a reporting path that
+> does not exist. Until it is on, do not use public Issues for a security
+> report — wait, or contact a maintainer through the repository's own channels.
+> This file deliberately contains no email address, because a security contact
+> that does not exist is worse than none.
 
 ### What to include
 
