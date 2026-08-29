@@ -103,6 +103,37 @@ anything.**
 Shield is a single-host tool. It is useful for learning, for lab validation, and
 for watching one machine you care about. It is not a fleet product.
 
+## What it looks like
+
+Renders of the real interface against a **synthetic lab dataset** — addresses
+from the documentation ranges, no production host. Every incident, report section and answer
+on screen was computed by Shield's own pipeline. Full set and capture notes:
+`docs/screenshots/README.md`.
+
+**Overview** — posture, devices online, live activity.
+
+![Overview](docs/screenshots/overview.png)
+
+**Deterministic incident report** — fixed sections built only from measured
+data, with evidence references you can open.
+
+![Incident report](docs/screenshots/incident-report.png)
+
+**Guided incident Q&A** — five closed questions, answered from the report
+without a model.
+
+![Guided Q&A](docs/screenshots/guided-qa.png)
+
+**Expert Evidence** — the bounded, audited read path for checking Shield's
+conclusions yourself.
+
+![Expert Evidence](docs/screenshots/expert-evidence.png)
+
+**Security Center** — collector health, ATT&CK coverage, and Shield's own
+health.
+
+![Security Center](docs/screenshots/health.png)
+
 ## Architecture overview
 
 ```mermaid
@@ -143,7 +174,7 @@ Full detail, including the IPC boundary and the dormant AI path, is in
 The supported path is the Debian package:
 
 ```bash
-git clone <repository-url> zuken-shield
+git clone https://github.com/trannguyenkhoa2002-art/zuken-shield.git
 cd zuken-shield
 bash packaging/build-deb.sh
 sudo apt install -y ./dist/shield-monitor_*_amd64.deb

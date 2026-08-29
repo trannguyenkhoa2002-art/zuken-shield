@@ -34,7 +34,13 @@ does not import scapy. The two run as distinct programs in distinct processes,
 exchanging structured observations over a local Unix socket.
 
 That separation is architectural. It makes the licence boundary explicit and
-testable; it is not a legal conclusion, and none is offered here.
+testable; it is not a legal conclusion, and none is offered here. Anyone who
+redistributes this package should review scapy's GPL-2.0 obligations for
+themselves; they are not covered by the Apache-2.0 licence of the Shield core.
+
+This service runs with CAP_NET_RAW and CAP_NET_ADMIN only. It reads packets and
+writes structured observations to a Unix socket; it never receives commands, and
+it has no path to Shield's database or response layer.
 
 Shield works without this package, with reduced network visibility.
 DOC

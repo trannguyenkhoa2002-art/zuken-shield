@@ -30,13 +30,19 @@ The launcher starts the desktop interface with the group membership it needs.
 You do not run a second agent — the interface talks to the service already
 running.
 
-Worth visiting first:
+The interface groups its screens into four sections. Worth visiting first:
 
-- **Overview** — what Shield is seeing right now.
-- **Alerts** — individual detections.
-- **Incidents** — grouped alerts, with the deterministic report.
-- **Evidence** — the Expert Evidence viewer.
-- **Health** — collector status and coverage.
+- **Operations → Overview** — what Shield is seeing right now.
+- **Operations → Alerts** — individual detections.
+- **Operations → Incidents** — grouped alerts, with the deterministic report
+  and the guided Q&A below it.
+- **Investigation → Expert Evidence** — the bounded, audited read path.
+- **Investigation → Security Center** — collector health, ATT&CK coverage, and
+  Shield's own health.
+
+If you were added to the `shield` group by the package install, `shield` works
+straight away — the launcher starts the interface under that group, so you do
+not have to log out and back in.
 
 ## 4. Generate something to look at
 
@@ -52,7 +58,7 @@ Within a short time a `FILE_INTEGRITY_CHANGED` alert should appear.
 
 ## 5. Read an incident report
 
-Open **Incidents** and select one. The report has ten sections built only from
+Open **Operations → Incidents** and select one. The report has ten sections built only from
 measured data: what type of incident, how severe, when, which asset, what was
 observed, which facts are established, which evidence supports it, which
 detections contributed, what to inspect next, and what the report cannot
@@ -76,7 +82,22 @@ and requests to take action, are refused.
 
 ## 7. Change the language
 
-Vietnamese and English are both available in Settings.
+Vietnamese and English are both available in **Management → Settings**.
+
+## What needs what
+
+- `sudo` — only for step 4's file change and for `apt install`; the interface
+  itself must **not** be run with `sudo`.
+- **Ubuntu 26.04 LTS or newer** — required for the packaged install, because
+  `python3-pyside6.*` first appears there.
+- **`bpftrace`** — optional. Without it, process, file and socket telemetry is
+  reduced and Shield reports the reduced coverage.
+- **`nftables`** — optional, and only needed for response actions that change
+  the firewall.
+- **`shield-packet-collector`** — optional. Without it, ARP/DHCP/ICMP/NDP
+  observation, TCP-handshake visibility, outbound DNS observation and the live
+  traffic graph are reported as unavailable; everything in this guide still
+  works.
 
 ## Next steps
 

@@ -7,7 +7,7 @@ read the invariants before writing code.
 ## Development setup
 
 ```bash
-git clone <repository-url> zuken-shield
+git clone https://github.com/trannguyenkhoa2002-art/zuken-shield.git
 cd zuken-shield
 python3 -m venv --system-site-packages .venv
 .venv/bin/pip install -e '.[dev]'

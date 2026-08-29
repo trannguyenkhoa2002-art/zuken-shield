@@ -69,9 +69,13 @@ must be resolved, not merely acknowledged.
 
 ## Screenshots
 
-- [ ] Captured per `screenshots/README.md`
-- [ ] Hostnames, addresses, MACs, usernames, and file paths scrubbed
-- [ ] Reviewed by a second pair of eyes before upload
+- [x] Captured per `screenshots/README.md` — eight screens, real interface,
+      synthetic lab dataset
+- [x] Hostnames, addresses, MACs, usernames, and file paths scrubbed: RFC 5737
+      `192.0.2.0/24`, IANA documentation MACs, lab device names, no home paths,
+      no PNG text metadata
+- [x] Five representative screenshots referenced from `README.md`
+- [ ] Reviewed by a second pair of eyes before public visibility
 
 ## Final
 

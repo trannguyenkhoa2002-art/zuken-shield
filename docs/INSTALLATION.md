@@ -25,7 +25,7 @@ Optional but recommended:
 ## Recommended: build and install the package
 
 ```bash
-git clone <repository-url> zuken-shield
+git clone https://github.com/trannguyenkhoa2002-art/zuken-shield.git
 cd zuken-shield
 bash packaging/build-deb.sh
 sudo apt install -y ./dist/shield-monitor_*_amd64.deb
