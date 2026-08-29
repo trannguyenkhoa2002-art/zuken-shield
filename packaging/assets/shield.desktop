@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Zuken Shield
+Name[vi]=Zuken Shield
+GenericName=Endpoint Security Monitor
+GenericName[vi]=Giám sát bảo mật máy
+Comment=Monitor endpoint activity, file integrity, USB devices and local-network threats
+Comment[vi]=Giám sát hoạt động máy, toàn vẹn file, USB và các mối đe dọa mạng cục bộ
+Exec=/usr/bin/shield
+Icon=shield-monitor
+Terminal=false
+Categories=Network;Security;System;
+StartupNotify=true
+Keywords=security;network;monitor;firewall;arp;mitm;
+Keywords[vi]=bảo mật;mạng;giám sát;tường lửa;

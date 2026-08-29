@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "PROBE_LOG_GAP",
+      "version": 1,
+      "enabled": true,
+      "kind": "probe_spool_overflow",
+      "match": {"field": "lines_lost", "operator": "gte", "value": 1},
+      "severity": "warning",
+      "title": "A probe lost log lines before it could send them",
+      "detail": "{lines_lost} lines were dropped by a probe — there is a gap in this machine's history",
+      "subject_field": "probe_id",
+      "playbook": ["snapshot_state"]
+    }
+  ]
+}

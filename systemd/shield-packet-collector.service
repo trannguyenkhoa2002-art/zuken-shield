@@ -1,0 +1,46 @@
+[Unit]
+Description=Shield packet collector — optional, separately licensed capture helper
+Documentation=file:/usr/share/doc/shield-packet-collector/README
+After=network.target
+Before=shield-agent.service
+
+[Service]
+Type=simple
+ExecStart=/opt/shield-packet-collector/.venv/bin/shield-packet-collector
+Restart=on-failure
+RestartSec=5
+
+# Quyền: CHỈ đủ để bắt gói. Helper không ghi database, không đổi cấu hình
+# mạng, không dừng tiến trình nào — nên nó không cần gì ngoài hai capability
+# dưới đây, và bị chặn mọi thứ khác.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=yes
+
+# Hệ thống tệp: chỉ đọc, và chỉ ghi được đúng thư mục chứa socket.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/shield
+RuntimeDirectory=shield
+RuntimeDirectoryMode=0750
+
+# Bề mặt còn lại
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_PACKET
+SystemCallArchitectures=native
+
+# Trần tài nguyên: một trận lụt gói không được biến helper thành vấn đề của máy.
+MemoryMax=256M
+TasksMax=32
+CPUQuota=100%
+
+[Install]
+WantedBy=multi-user.target

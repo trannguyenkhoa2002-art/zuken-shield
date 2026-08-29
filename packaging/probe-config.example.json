@@ -1,0 +1,24 @@
+{
+  "server_host": "192.168.1.10",
+  "server_port": 9443,
+  "probe_id": "thay-bang-endpoint_id-do-shield-admin-probe-enroll-in-ra",
+  "display_name": "may-ban-lam-viec",
+  "certificate": "/etc/shield-probe/probe.crt",
+  "private_key": "/etc/shield-probe/probe.key",
+  "server_ca": "/etc/shield-probe/server-ca.crt",
+  "spool_dir": "/var/lib/shield-probe/spool",
+  "spool_max_bytes": 268435456,
+  "rate_per_s": 200,
+  "batch_lines": 500,
+  "batch_bytes": 262144,
+  "journal_identifiers": [
+    "sshd",
+    "sudo",
+    "su",
+    "kernel",
+    "systemd-logind",
+    "cron"
+  ],
+  "log_files": [],
+  "include_audit": true
+}

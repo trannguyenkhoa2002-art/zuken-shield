@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/shield/.venv/bin/shield-guardian "$@"

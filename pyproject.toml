@@ -1,0 +1,107 @@
+[project]
+name = "shield"
+version = "3.0.0a2"
+description = "Zuken Shield — privacy-first Linux endpoint and local-network defense platform"
+authors = [{name = "Zuken"}]
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6",
+    "pyqtgraph>=0.13",
+    "manuf>=1.1.1",  # fallback tra vendor MAC khi không có /usr/share/ieee-data/oui.txt
+    "reportlab>=4.0",  # xuất báo cáo PDF (tab Báo cáo)
+]
+
+[project.optional-dependencies]
+# Runtime cho phần giải thích AI cục bộ. TUỲ CHỌN có chủ ý: Shield phải khởi
+# động và điều tra bình thường khi không có nó, nên nó không bao giờ được lên
+# `dependencies` hay `Depends:` của gói .deb.
+#
+# File GGUF KHÔNG nằm ở đây và không nằm trong gói. Shield không tự tải model;
+# quản trị viên tự đặt file vào `/opt/shield/models`. Xem mục 12d của hướng dẫn.
+ai = [
+    "llama-cpp-python>=0.3",
+]
+
+# Đủ bộ để chạy release gate cục bộ: test + coverage, lint, type, và 2 công cụ
+# bảo mật (bandit soi source, pip-audit soi dependency). Không có nhóm này thì
+# mỗi lần gate lại phải cài tay từng cái.
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "bandit>=1.7",
+    "pip-audit>=2.7",
+]
+
+# Bắt gói tin KHÔNG nằm ở đây. Nó là gói riêng `shield-packet-collector`, phụ
+# thuộc scapy (GPL-2.0), và lõi Apache-2.0 không được kéo nó vào.
+#
+# Ghi chú này là COMMENT, không phải một bảng TOML. Bản trước viết nó thành
+# `[project.optional-dependencies-note]`, và PEP 621 cấm khoá lạ dưới `project`
+# — setuptools từ chối sinh metadata, nên `pip install` trong postinst hỏng và
+# gói không cài được. Máy phát triển không lộ ra vì nó không cài lại lần nào
+# sau thay đổi đó; một container Ubuntu sạch lộ ra ngay lần đầu.
+
+[project.scripts]
+shield-agent = "shield.agent.__main__:main"
+shield-ui = "shield.ui.__main__:main"
+shield-benchmark = "shield.benchmark:main"
+shield-privileged = "shield.privileged.__main__:main"
+shield-assess = "shield.assessment.cli:main"
+shield-admin = "shield.security.admin_cli:main"
+shield-guardian = "shield.guardian.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["shield*"]
+
+[tool.setuptools.package-data]
+"shield.rules" = ["*.json"]
+"shield.assessment" = ["*.json"]
+
+[tool.setuptools.data-files]
+"share/shield/systemd" = ["systemd/*.service", "systemd/*.timer"]
+"share/shield/audit" = ["packaging/99-shield.rules"]
+"share/shield/scripts" = ["scripts/*.sh"]
+"share/doc/shield" = ["docs/*.md"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# --- Cấu hình công cụ chính thức (KE-HOACH-SHIELD-2.0.md mục 0.1) ---
+# Trước 2.0, ruff/mypy/pytest chỉ chạy bằng cờ dòng lệnh trong script gate, nên
+# mỗi lần chạy lại có thể ra kết quả khác. Từ đây, cấu hình nằm trong repo và CI
+# chạy đúng cấu hình này.
+
+[tool.ruff]
+target-version = "py310"
+line-length = 140
+exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# Bộ luật ĐANG được ép: bug thật (E9/F), bẫy logic (B), và các dạng viết thừa
+# (C4/PIE). Codebase sạch 100% với bộ này.
+#
+# CHƯA ép: I (thứ tự import), UP (cú pháp mới), SIM (đơn giản hoá) — tổng ~200
+# phát hiện, toàn bộ là hình thức. Dọn chúng trong cùng batch với việc sửa
+# isolation sẽ trộn 200 thay đổi vô hại vào một diff bảo mật cần đọc kỹ. Đây là
+# việc riêng, không phải việc bị bỏ quên.
+select = ["E9", "F", "B", "C4", "PIE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Test cần root/netns tự bỏ qua khi thiếu quyền; đánh dấu để chạy riêng được.
+markers = [
+    "netns: cần CAP_NET_ADMIN và network namespace (chạy có chủ đích, không chạy mặc định)",
+    "root: cần chạy dưới root trên máy dùng một lần",
+]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["shield", "probe"]
+ignore_missing_imports = true
+# Mypy CHƯA phải cổng chặn: còn 165 lỗi tồn đọng, phần lớn là Optional chưa
+# narrow. Khai ở đây để mọi người chạy cùng một cấu hình; siết dần theo module
+# bằng cách bỏ dòng ignore_errors tương ứng, không siết cả repo một lần.
+warn_unused_ignores = false

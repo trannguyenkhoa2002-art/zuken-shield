@@ -1,0 +1,47 @@
+[Unit]
+Description=Shield Guardian — canh chừng agent từ bên ngoài tiến trình
+Documentation=file:/usr/share/doc/shield-monitor/USER_GUIDE.md
+# KHÔNG đặt Requires/After shield-agent: Guardian tồn tại chính là để chạy
+# LÚC agent không chạy. Ràng buộc nó vào agent sẽ phá đúng công dụng của nó.
+
+[Service]
+Type=oneshot
+User=root
+Group=shield
+StateDirectory=shield
+# 0770 chứ KHÔNG để mặc định 0755: systemd áp lại quyền thư mục này mỗi
+# lần service khởi động. Để mặc định thì UI (chạy bằng user thường, group
+# shield) không tạo được file -wal/-shm mà SQLite ở chế độ WAL bắt buộc
+# phải tạo — nên UI không đọc nổi database, kể cả chỉ để SELECT. Agent tự
+# chmod lại sau khi chạy KHÔNG cứu được: lúc agent tắt thì quyền mất theo.
+# Cùng một cái bẫy đã ghi chú cho RuntimeDirectory phía trên.
+StateDirectoryMode=0770
+
+ExecStart=/opt/shield/.venv/bin/shield-guardian
+
+# Guardian chỉ ĐỌC: hash file, hỏi systemctl, đếm dòng ledger. Nó không có
+# nftables, không kill process, không sửa cấu hình. Vì vậy siết được chặt hơn
+# hẳn agent — và một Guardian bị chiếm quyền cũng không làm được gì.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/shield
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=192M
+TasksMax=32
+TimeoutStartSec=90
+
+Environment=SHIELD_DB=/var/lib/shield/shield.db
+Environment=SHIELD_STATE_DIR=/var/lib/shield
+
+[Install]
+WantedBy=multi-user.target

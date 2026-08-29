@@ -1,0 +1,17 @@
+[Unit]
+Description=Chạy Shield Guardian mỗi phút
+Documentation=file:/usr/share/doc/shield-monitor/USER_GUIDE.md
+
+[Timer]
+# Chạy 60 giây sau khi boot rồi lặp mỗi 60 giây. Timer chứ không phải daemon:
+# một daemon canh chừng thì lại cần thứ khác canh chừng nó, còn timer do
+# systemd giữ — muốn tắt Guardian thì phải phá systemd, việc đó ồn ào hơn
+# nhiều so với giết một tiến trình Python.
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5
+Persistent=true
+Unit=shield-guardian.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,21 @@
+# pyproject riêng cho gói shield-probe.
+#
+# Cố ý KHÔNG dùng pyproject.toml của Shield: gói chính kéo theo PySide6, scapy,
+# pyqtgraph và reportlab — khoảng 200 MB cho một máy chỉ cần gửi log đi. Probe
+# không có dependency nào ngoài thư viện chuẩn Python.
+[project]
+name = "shield-probe"
+version = "1.1.0a1"
+description = "Shield Probe — read-only log forwarder for Zuken Shield"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+shield-probe = "probe.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["probe*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

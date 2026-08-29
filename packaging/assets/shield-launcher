@@ -1,0 +1,34 @@
+#!/bin/bash
+# Launcher cho UI Shield — cài bởi gói .deb tại /usr/bin/shield.
+# UI luôn chạy bằng user thường (không cần root); nó chỉ nói chuyện với
+# agent (chạy nền qua systemd) qua socket /run/shield/shield.sock.
+#
+# SHIELD_DB chỉ thẳng đúng file agent đang dùng — KHÔNG để store.py tự đoán
+# qua os.access(W_OK), vì lúc /var/lib/shield chưa được nới quyền (agent
+# chưa kịp chạy lần nào, hoặc quyền bị reset), store.py sẽ ÂM THẦM chuyển
+# sang 1 file DB rỗng khác ở ~/.local/share/shield/ — UI mở lên không thấy
+# thiết bị/cảnh báo nào dù agent đã quét ra rất nhiều (bug đã gặp thực tế).
+set -euo pipefail
+export SHIELD_DB=/var/lib/shield/shield.db
+export SHIELD_SOCK=/run/shield/shield.sock
+
+# Package installation normally starts both services. If an administrator
+# stopped them later, request desktop authentication once and start them here.
+if command -v systemctl >/dev/null && \
+   { ! systemctl is-active --quiet shield-privileged.service || \
+     ! systemctl is-active --quiet shield-agent.service; }; then
+    if command -v pkexec >/dev/null; then
+        pkexec systemctl start shield-privileged.service shield-agent.service || true
+    fi
+fi
+
+# `usermod -aG shield` updates /etc/group immediately but an already-running
+# desktop session does not gain the supplementary GID until next login. `sg`
+# starts only the UI with that group, so `shield` works directly after install.
+if [ "${SHIELD_GROUP_REEXEC:-0}" != "1" ] && \
+   ! id -nG | tr ' ' '\n' | grep -qx shield && \
+   getent group shield | awk -F: -v user="$(id -un)" '$4 ~ "(^|,)" user "(,|$)" { found=1 } END { exit !found }'; then
+    exec sg shield -c 'SHIELD_GROUP_REEXEC=1 SHIELD_DB=/var/lib/shield/shield.db SHIELD_SOCK=/run/shield/shield.sock exec /opt/shield/.venv/bin/python3 -m shield.ui'
+fi
+
+exec /opt/shield/.venv/bin/python3 -m shield.ui "$@"

@@ -1,0 +1,43 @@
+[Unit]
+Description=Shield Probe — đọc log máy này và gửi về Shield
+Documentation=file:/usr/share/doc/shield-probe/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Cần root để đọc journald của toàn hệ thống và /var/log/auth.log. KHÔNG cần
+# gì hơn: probe chỉ đọc, nên siết chặt hơn hẳn shield-agent.
+User=root
+StateDirectory=shield-probe
+ConfigurationDirectory=shield-probe
+
+ExecStart=/usr/bin/shield-probe run
+Restart=on-failure
+RestartSec=10
+
+# Probe không bao giờ thay đổi hệ thống. Toàn bộ khối này là để một probe bị
+# chiếm quyền cũng không làm được gì ngoài việc đọc log — xem probe/__init__.py.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/shield-probe
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+# Chỉ TCP/IP để nối tới Shield. Không AF_PACKET (không sniff được),
+# không AF_NETLINK (không đụng được cấu hình mạng).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryMax=128M
+TasksMax=32
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

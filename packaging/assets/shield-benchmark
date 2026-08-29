@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stable system entrypoint; Python console scripts live in Shield's private venv.
+exec /opt/shield/.venv/bin/shield-benchmark "$@"

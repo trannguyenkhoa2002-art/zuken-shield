@@ -1,0 +1,33 @@
+[Unit]
+Description=Shield minimal privileged response helper
+After=local-fs.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+Group=shield
+RuntimeDirectory=shield-helper
+RuntimeDirectoryMode=0770
+ExecStart=/opt/shield/.venv/bin/python -m shield.privileged
+Restart=on-failure
+RestartSec=3
+Environment=SHIELD_HELPER_SOCK=/run/shield-helper/helper.sock
+# Replace with the numeric UID of the unprivileged Shield coordinator.
+Environment=SHIELD_AGENT_UID=0
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

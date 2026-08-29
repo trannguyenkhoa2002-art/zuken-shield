@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/shield-probe/.venv/bin/shield-probe "$@"

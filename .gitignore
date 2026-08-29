@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Test and type caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Shield runtime data — never commit any of this
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+shield.db*
+/var/lib/shield/
+backups/
+snapshots/
+quarantine/
+*.pcap
+*.pcapng
+*.log
+
+# Local AI — models are never distributed with the source
+*.gguf
+*.bin
+*.safetensors
+models/
+
+# Local configuration and secrets
+.env
+*.pem
+*.key
+!packaging/**/*.key.example
+secrets.json
+config.local.*
+
+# Editors and operating system
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Working notes that should not be published
+NOTES.md
+TODO.local.md
+scratch/

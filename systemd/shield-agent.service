@@ -1,0 +1,137 @@
+[Unit]
+Description=Shield agent — collector/detector root cho giám sát mạng nhà
+After=network-online.target
+Wants=network-online.target
+Wants=shield-privileged.service
+After=shield-privileged.service
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Cần root (uid 0) cho arp-scan/tcpdump/nftables/scapy sniff (mục 0.2 kế
+# hoạch) — root luôn qua được mọi permission check nên chạy egid=shield
+# không mất quyền gì. Group=shield ở đây MỚI là thứ khiến RuntimeDirectory
+# và socket agent tự tạo ra mang group "shield" — trước đây chỉ có
+# User=root (Group= bỏ trống) nên /run/shield và socket đều ra root:root,
+# user thường trong group "shield" vẫn không đọc/ghi được (UI báo "Mất kết
+# nối agent" mãi dù agent chạy bình thường). tmpfiles.d/systemctl chgrp tay
+# KHÔNG sửa được việc này — RuntimeDirectory tự tạo lại root:root mỗi lần
+# service start, đè lên bất cứ gì tmpfiles.d làm trước đó lúc boot.
+User=root
+Group=shield
+RuntimeDirectory=shield
+RuntimeDirectoryMode=0770
+RuntimeDirectoryPreserve=yes
+StateDirectory=shield
+# 0770 chứ KHÔNG để mặc định 0755: systemd áp lại quyền thư mục này mỗi
+# lần service khởi động. Để mặc định thì UI (chạy bằng user thường, group
+# shield) không tạo được file -wal/-shm mà SQLite ở chế độ WAL bắt buộc
+# phải tạo — nên UI không đọc nổi database, kể cả chỉ để SELECT. Agent tự
+# chmod lại sau khi chạy KHÔNG cứu được: lúc agent tắt thì quyền mất theo.
+# Cùng một cái bẫy đã ghi chú cho RuntimeDirectory phía trên.
+StateDirectoryMode=0770
+
+# Bật đủ 4 collector (giai đoạn 1-4). Bỏ cờ nào nếu không cần — ví dụ máy
+# không có card Wi-Fi riêng thì vẫn giữ nguyên (giai đoạn 6 Wi-Fi là tuỳ chọn,
+# không nằm trong các cờ này). --interface bỏ trống để tự dò default route.
+ExecStart=/opt/shield/.venv/bin/python -m shield.agent --discover --mitm --portscan --dns --journal --endpoint --fim-path /etc/hosts --fim-path /etc/passwd --fim-path /etc/sudoers
+Restart=on-failure
+RestartSec=3
+
+# Watchdog: `Restart=` chỉ bắt được agent CHẾT, không bắt được agent TREO —
+# tiến trình còn sống, systemd thấy "active", nhưng không collector nào chạy
+# nữa. Agent ping WATCHDOG=1 mỗi nửa chu kỳ (shield/common/sdnotify.py); im
+# quá 90 giây thì systemd giết và khởi động lại.
+WatchdogSec=90
+
+# CỐ Ý giữ `on-failure` thay vì `always`: nút "Tắt Shield" trong app cho agent
+# thoát với mã 0, và `always` sẽ bật lại nó sau vài giây khiến nút đó vô dụng.
+# Việc phát hiện "agent dừng mà không ai yêu cầu" là nhiệm vụ của
+# shield-guardian.timer, chứ không phải của một Restart= đè lên ý muốn của
+# người dùng.
+
+# Hardening tương thích với collector mạng/root hiện có. Không dùng
+# ProtectHome=yes vì quarantine cần khôi phục file về vị trí ban đầu.
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_PACKET AF_NETLINK
+LimitNOFILE=16384
+MemoryMax=1G
+TasksMax=512
+
+Environment=SHIELD_SOCK=/run/shield/shield.sock
+Environment=SHIELD_DB=/var/lib/shield/shield.db
+Environment=SHIELD_PCAP_DIR=/var/lib/shield/pcaps
+Environment=SHIELD_SNAPSHOT_DIR=/var/lib/shield/snapshots
+Environment=SHIELD_QUARANTINE_DIR=/var/lib/shield/quarantine
+Environment=SHIELD_HELPER_SOCK=/run/shield-helper/helper.sock
+# Siết thêm ngoài group `shield`: chỉ các UID liệt kê ở đây mới nối được
+# socket agent (root luôn được phép). Bỏ trống = giữ hành vi cũ, mọi thành
+# viên group `shield` nối được — mà nối được nghĩa là chạy được response
+# (block_ip/stop_process bằng root). Xem docs/OPERATIONS.md.
+#Environment=SHIELD_IPC_ALLOWED_UIDS=1000
+# Giới hạn địa chỉ bind của tarpit. Bỏ trống = 0.0.0.0 (đúng cho máy LAN);
+# đặt IP LAN cụ thể nếu máy có địa chỉ public.
+#Environment=SHIELD_TARPIT_BIND=
+# Sinh toàn bộ khoá dưới đây bằng: sudo ./scripts/generate-signing-keys.sh
+# Đặt bằng systemd credential/secret manager trong production. Nếu để trống,
+# ledger vẫn có hash-chain nhưng không có xác thực HMAC chống tính lại chuỗi.
+#Environment=SHIELD_AUDIT_HMAC_KEY=
+Environment=SHIELD_FORENSIC_CHECKPOINT=/var/lib/shield/forensic-checkpoint.json
+# When configured, unsigned or invalid rule packs stop agent startup.
+#Environment=SHIELD_RULE_PUBLIC_KEY=/etc/shield/rule-signing-public.pem
+# Optional fail-closed signed configuration/update manifest.
+#Environment=SHIELD_CONFIG_MANIFEST=/etc/shield/update-manifest.json
+#Environment=SHIELD_CONFIG_PUBLIC_KEY=/etc/shield/config-signing-public.pem
+#Environment=SHIELD_CONFIG_SIGNATURE=/etc/shield/update-manifest.json.sig
+#Environment=SHIELD_CONFIG_ARTIFACT_ROOT=/opt/shield
+#Environment=SHIELD_PLUGIN_PUBLIC_KEY=/etc/shield/plugin-signing-public.pem
+#Environment=SHIELD_INTEGRITY_HMAC_KEY=
+# Optional multi-endpoint mTLS control plane; disabled in standalone mode.
+#Environment=SHIELD_FLEET_SERVER_CERT=/etc/shield/fleet-server.pem
+#Environment=SHIELD_FLEET_SERVER_KEY=/etc/shield/fleet-server-key.pem
+#Environment=SHIELD_FLEET_CLIENT_CA=/etc/shield/fleet-client-ca.pem
+#Environment=SHIELD_FLEET_LISTEN=127.0.0.1:9443
+# Thông báo Telegram cho alert critical (mục 2.4) — bỏ trống nếu không dùng.
+# Tạo bot: nói chuyện với @BotFather trên Telegram để lấy token; CHAT_ID lấy
+# từ @userinfobot hoặc GET https://api.telegram.org/bot<token>/getUpdates.
+#Environment=SHIELD_TELEGRAM_TOKEN=
+#Environment=SHIELD_TELEGRAM_CHAT_ID=
+
+[Install]
+WantedBy=multi-user.target
+
+# --- Ghi chú cài đặt ---
+# 1. Tạo group cho socket (mục 0.2 — UI không cần root, chỉ cần trong group này):
+#      sudo groupadd shield
+#      sudo usermod -aG shield <user-của-bạn>   # đăng xuất/đăng nhập lại để áp dụng
+#
+# 2. Cài code + venv:
+#      sudo mkdir -p /opt/shield && sudo cp -r . /opt/shield
+#      cd /opt/shield && ./install.sh
+#
+# 3. Cài service:
+#      sudo cp systemd/shield-agent.service /etc/systemd/system/
+#      sudo systemctl daemon-reload
+#      sudo systemctl enable --now shield-agent
+#
+# 4. Group=shield ở trên tự lo việc /run/shield + socket ra đúng group —
+#    không cần chgrp tay hay tmpfiles.d nữa. Chỉ cần user thường đã ở group
+#    "shield" (bước 1) và đăng xuất/đăng nhập lại 1 lần để có gid đó.
+#
+# 5. Xem log: journalctl -u shield-agent -f
+#    Log rotation: đã có sẵn qua journald (không cần cấu hình thêm — khác
+#    với pcap/snapshot, những cái đó tự giới hạn bằng -C/-W và cần cron dọn
+#    file cũ nếu muốn, xem mục 6 kế hoạch "Đĩa đầy vì pcap").
+#
+# 6. Gỡ hoàn toàn rule nftables Shield tạo (không đụng firewall khác):
+#      sudo nft delete table inet shield

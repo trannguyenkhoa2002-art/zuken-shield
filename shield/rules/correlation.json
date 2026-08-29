@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "pack_type": "correlation",
+  "rules": [
+    {
+      "id": "CORRELATED_RECON_AND_SSH_ATTACK",
+      "enabled": true,
+      "required_rules": [
+        "SCAN_PORTSCAN",
+        "LOCAL_SSH_BRUTEFORCE"
+      ],
+      "window_s": 600,
+      "severity": "critical",
+      "title": "Reconnaissance followed by an SSH attack",
+      "mitre_techniques": [
+        "T1046",
+        "T1110"
+      ],
+      "recommended_action": "Block the source address, then check whether any SSH login succeeded"
+    },
+    {
+      "id": "CORRELATED_NEW_DEVICE_THEN_SCAN",
+      "enabled": true,
+      "required_rules": [
+        "DEVICE_NEW",
+        "SCAN_PORTSCAN"
+      ],
+      "window_s": 900,
+      "severity": "critical",
+      "title": "An unknown device joined the network and immediately scanned it",
+      "mitre_techniques": [
+        "T1046",
+        "T1200"
+      ],
+      "recommended_action": "Identify the device physically before allowing it to stay on the network"
+    },
+    {
+      "id": "CORRELATED_MITM_AND_DNS_CHANGE",
+      "enabled": true,
+      "required_rules": [
+        "MITM_GATEWAY_MAC_CHANGED",
+        "DNS_RESOLVER_CHANGED"
+      ],
+      "window_s": 1800,
+      "severity": "critical",
+      "title": "Gateway impersonation combined with a DNS redirect",
+      "mitre_techniques": [
+        "T1557",
+        "T1071"
+      ],
+      "recommended_action": "Pin the gateway ARP entry and restore the trusted DNS servers"
+    },
+    {
+      "id": "CORRELATED_SSH_ACCESS_THEN_NEW_BEHAVIOR",
+      "enabled": true,
+      "required_rules": [
+        "SSH_ROOT_LOGIN_SUCCEEDED",
+        "ANOMALY_NEW_BEHAVIOR"
+      ],
+      "window_s": 1800,
+      "severity": "critical",
+      "title": "Root logged in over SSH and then did something never seen before",
+      "mitre_techniques": [
+        "T1078",
+        "T1059"
+      ],
+      "recommended_action": "Review the process timeline for that host before the session ends"
+    },
+    {
+      "id": "ACCUMULATED_AUTH_FAILURES",
+      "enabled": true,
+      "required_rules": [
+        "SYSLOG_AUTH_FAILURE",
+        "SSH_AUTH_FAILURE_OBSERVED",
+        "LOCAL_SSH_BRUTEFORCE"
+      ],
+      "min_count": 15,
+      "window_s": 600,
+      "severity": "critical",
+      "title": "Repeated authentication failures from one source",
+      "mitre_techniques": [
+        "T1110"
+      ],
+      "recommended_action": "Check whether any login later succeeded, then block the source address"
+    },
+    {
+      "id": "ACCUMULATED_DEVICE_CONFIG_CHANGES",
+      "enabled": true,
+      "required_rules": [
+        "SYSLOG_DEVICE_CONFIG_CHANGED"
+      ],
+      "min_count": 5,
+      "window_s": 1800,
+      "severity": "critical",
+      "title": "A device is being reconfigured repeatedly",
+      "mitre_techniques": [
+        "T1565"
+      ],
+      "recommended_action": "Confirm the change was planned; if not, compare against the last known-good configuration"
+    },
+    {
+      "id": "ACCUMULATED_DEVICE_RESTARTS",
+      "enabled": true,
+      "required_rules": [
+        "SYSLOG_DEVICE_RESTARTED"
+      ],
+      "min_count": 4,
+      "window_s": 3600,
+      "severity": "warning",
+      "title": "A device keeps restarting",
+      "mitre_techniques": [
+        "T1499"
+      ],
+      "recommended_action": "Check the device's power and load before treating it as an attack"
+    },
+    {
+      "id": "ACCUMULATED_PROBE_LOG_GAPS",
+      "enabled": true,
+      "required_rules": [
+        "PROBE_LOG_GAP"
+      ],
+      "min_count": 3,
+      "window_s": 3600,
+      "severity": "critical",
+      "title": "A probe keeps losing log records",
+      "mitre_techniques": [
+        "T1562.008"
+      ],
+      "recommended_action": "A repeated gap is either a failing probe or someone clearing logs — check the endpoint directly, not only its logs"
+    }
+  ]
+}

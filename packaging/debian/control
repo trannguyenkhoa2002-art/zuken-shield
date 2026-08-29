@@ -1,0 +1,25 @@
+Package: shield-monitor
+Version: VERSION_PLACEHOLDER
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: Zuken <noreply@localhost>
+Depends: python3 (>= 3.10), python3-venv, python3-setuptools, python3-pyside6.qtcore, python3-pyside6.qtgui, python3-pyside6.qtwidgets, python3-reportlab, arp-scan, nmap, tcpdump, nftables, libnotify-bin, polkitd, pkexec
+Suggests: shield-packet-collector, python3-pyqtgraph
+Recommends: auditd, bpftrace, bpftool, ieee-data, tshark, dnsutils, fonts-dejavu-core
+Description: Zuken Shield endpoint and local-network defense platform
+ Zuken Shield monitors endpoint processes, file integrity, USB devices, listening
+ sockets, services and local-network threats. It provides deterministic risk
+ scoring, incident correlation, reversible response, forensic integrity,
+ reports, offline log summaries, MITRE-mapped behavioral detection, local
+ anomaly baselines, tamper monitoring and a safe defensive assessment lab.
+ .
+ The live traffic graph needs python3-pyqtgraph, which is suggested rather than
+ required: on Ubuntu it pulls in PyQt6 (GPL-3.0) through an alternative
+ dependency, and Shield targets Apache-2.0 and does not import PyQt6. Without
+ it the graph is unavailable and everything else is unaffected.
+ .
+ It ships a monitoring agent, a minimal privileged response helper and a PySide6
+ desktop UI. The UI runs as a normal user and communicates over authenticated
+ local Unix sockets.
+ The UI is fully bilingual (English/Vietnamese, switchable at runtime).

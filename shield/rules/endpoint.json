@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "ENDPOINT_USB_STORAGE_ATTACHED",
+      "version": 1,
+      "enabled": true,
+      "kind": "usb_device_added",
+      "match": {"field": "vendor", "operator": "exists", "value": true},
+      "severity": "info",
+      "title": "A USB device was attached",
+      "detail": "USB device {vendor}:{product} was attached",
+      "subject_field": "probe_host",
+      "playbook": ["snapshot_state"]
+    },
+    {
+      "id": "ENDPOINT_LISTENER_ON_REMOTE_ACCESS_PORT",
+      "version": 1,
+      "enabled": true,
+      "kind": "listener_opened",
+      "match": {"field": "port", "operator": "in", "value": [23, 3389, 5900, 5901, 4444, 1080]},
+      "severity": "warning",
+      "title": "A remote-access port started listening",
+      "detail": "A process began listening on port {port} — telnet/RDP/VNC/proxy ports are rarely opened intentionally",
+      "subject_field": "port",
+      "playbook": ["snapshot_state"]
+    }
+  ]
+}

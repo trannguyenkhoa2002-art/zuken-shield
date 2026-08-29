@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "SSH_ROOT_LOGIN_SUCCEEDED",
+      "version": 1,
+      "enabled": true,
+      "kind": "ssh_auth_success",
+      "match": {"field": "user", "operator": "eq", "value": "root"},
+      "severity": "critical",
+      "title": "Direct root login over SSH succeeded",
+      "detail": "root logged in over SSH from {ip}",
+      "subject_field": "ip",
+      "playbook": ["snapshot_state", "block_ip"]
+    },
+    {
+      "id": "SSH_AUTH_FAILURE_OBSERVED",
+      "version": 1,
+      "enabled": true,
+      "kind": "ssh_auth_failure",
+      "match": {"field": "ip", "operator": "exists", "value": true},
+      "severity": "info",
+      "title": "SSH authentication failed",
+      "detail": "Failed SSH login for {user} from {ip}",
+      "subject_field": "ip",
+      "playbook": ["snapshot_state"]
+    },
+    {
+      "id": "SSH_LOGIN_BY_SYSTEM_ACCOUNT",
+      "version": 1,
+      "enabled": true,
+      "kind": "ssh_auth_success",
+      "match": {"field": "user", "operator": "in",
+                "value": ["daemon", "bin", "sys", "nobody", "www-data", "mysql", "postgres", "backup"]},
+      "severity": "critical",
+      "title": "A system account logged in over SSH",
+      "detail": "System account {user} logged in from {ip} — these accounts should never log in interactively",
+      "subject_field": "ip",
+      "playbook": ["snapshot_state", "block_ip"]
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+#!/bin/bash
+# Stop the running code before dpkg replaces /opt/shield and preserve a
+# transactionally consistent database copy before every package upgrade.
+set -e
+
+if [ "$1" = "upgrade" ]; then
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null; then
+        systemctl stop shield-guardian.timer shield-agent.service shield-privileged.service || true
+    fi
+
+    DB_PATH=/var/lib/shield/shield.db
+    if [ -f "$DB_PATH" ]; then
+        BACKUP_DIR=/var/lib/shield/backups
+        # 1770 + group `shield`, KHÔNG phải 700 root:root.
+        #
+        # `/var/lib/shield` là `drwxrwx--- root:shield` (systemd StateDirectory
+        # Mode=0770) và database là `-rw-rw---- root:shield`: nhóm `shield` là
+        # một phần của mô hình quyền, không phải ngoại lệ. Nhưng dòng này từng
+        # tạo `backups/` với `-m 700`, và vì dpkg chạy với nhóm chính là root,
+        # thư mục ra `drwx------ root:root`.
+        #
+        # `install -d` áp mode cho cả thư mục ĐÃ CÓ, nên mỗi lần nâng cấp lại
+        # đặt về 700 — một lượt sửa quyền bằng tay sẽ bị xoá ở lần cài kế tiếp.
+        #
+        # Hậu quả đã xảy ra: thành viên nhóm `shield` ghi được database nhưng
+        # không ghi được bản sao lưu của nó, nên nâng cấp schema chết với
+        # `sqlite3.OperationalError: unable to open database file` — thông báo
+        # không nói gì về quyền.
+        #
+        # Bit sticky (1) là phần thêm vào có chủ đích: mở quyền ghi cho nhóm
+        # nghĩa là thành viên nhóm XOÁ được file của người khác trong thư mục.
+        # Với thư mục chứa bản sao lưu thì không chấp nhận được, và sticky chặn
+        # đúng điều đó mà vẫn cho tạo file mới.
+        install -d -m 1770 "$BACKUP_DIR"
+        if getent group shield >/dev/null 2>&1; then
+            chgrp shield "$BACKUP_DIR" || true
+        fi
+        BACKUP_PATH="$BACKUP_DIR/shield-pre-upgrade-$(date +%s).db"
+        DB_PATH="$DB_PATH" BACKUP_PATH="$BACKUP_PATH" python3 -c \
+            'import os, sqlite3; source=sqlite3.connect(os.environ["DB_PATH"]); target=sqlite3.connect(os.environ["BACKUP_PATH"]); source.backup(target); target.close(); source.close()'
+        chmod 600 "$BACKUP_PATH"
+        echo "==> [zuken-shield] Backup trước nâng cấp: $BACKUP_PATH"
+    fi
+fi
+
+exit 0

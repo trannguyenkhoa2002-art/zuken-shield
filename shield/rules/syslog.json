@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "SYSLOG_AUTH_FAILURE",
+      "version": 1,
+      "enabled": true,
+      "source": "syslog",
+      "kind": "syslog_message",
+      "match": {"field": "message", "operator": "regex",
+                "value": "(?i)(authentication fail|login failed|invalid password|access denied)"},
+      "severity": "warning",
+      "title": "A network device reported a failed login",
+      "detail": "{source_ip} reported: {message}",
+      "subject_field": "source_ip",
+      "playbook": ["snapshot_state"]
+    },
+    {
+      "id": "SYSLOG_DEVICE_CONFIG_CHANGED",
+      "version": 1,
+      "enabled": true,
+      "source": "syslog",
+      "kind": "syslog_message",
+      "match": {"field": "message", "operator": "regex",
+                "value": "(?i)(configuration (changed|saved)|config commit|firmware (upgrade|update))"},
+      "severity": "warning",
+      "title": "A network device reported a configuration change",
+      "detail": "{source_ip} reported: {message}",
+      "subject_field": "source_ip",
+      "playbook": ["snapshot_state"]
+    },
+    {
+      "id": "SYSLOG_DEVICE_RESTARTED",
+      "version": 1,
+      "enabled": true,
+      "source": "syslog",
+      "kind": "syslog_message",
+      "match": {"field": "message", "operator": "regex",
+                "value": "(?i)(system (restart|reboot)|rebooting now|cold start|warm start)"},
+      "severity": "info",
+      "title": "A network device restarted",
+      "detail": "{source_ip} reported: {message}",
+      "subject_field": "source_ip",
+      "playbook": ["snapshot_state"]
+    }
+  ]
+}

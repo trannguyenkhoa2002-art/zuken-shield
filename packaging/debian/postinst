@@ -1,0 +1,88 @@
+#!/bin/bash
+# postinst — chạy sau khi dpkg giải nén file của gói shield-monitor.
+# Tương đương install.sh cũ + phần cài systemd/group từng ghi tay trong
+# comment của systemd/shield-agent.service — gộp lại để `dpkg -i`/`apt install`
+# là đủ, không cần làm tay từng bước nữa.
+set -e
+
+SHIELD_HOME=/opt/shield
+VENV="$SHIELD_HOME/.venv"
+
+echo "==> [shield-monitor] Tạo virtualenv dùng Python packages do Ubuntu quản lý"
+python3 -m venv --system-site-packages --clear "$VENV"
+if "$VENV/bin/pip" install --no-index --no-deps --no-build-isolation "$SHIELD_HOME" --quiet; then
+    echo "    Cài mã Shield xong (không truy cập PyPI)."
+else
+    echo "!!  Cài mã Shield vào virtualenv thất bại." >&2
+    echo "!!  Chạy lại: sudo $VENV/bin/pip install --no-index --no-deps --no-build-isolation $SHIELD_HOME" >&2
+    exit 1
+fi
+
+echo "==> [shield-monitor] Tạo group 'shield' (UI user thường dùng group này để nối socket agent)"
+if ! getent group shield >/dev/null; then
+    groupadd --system shield
+fi
+
+TARGET_USER="${SUDO_USER:-${PKEXEC_UID:+$(getent passwd "$PKEXEC_UID" | cut -d: -f1)}}"
+if [ -z "$TARGET_USER" ] && [ -n "${DOAS_USER:-}" ]; then
+    TARGET_USER="$DOAS_USER"
+fi
+if [ -n "$TARGET_USER" ] && [ "$TARGET_USER" != "root" ]; then
+    usermod -aG shield "$TARGET_USER" || true
+    echo "    Đã thêm '$TARGET_USER' vào group 'shield' — cần đăng xuất/đăng nhập lại để có hiệu lực."
+else
+    echo "    Không tự phát hiện được user thường gọi sudo — tự chạy:"
+    echo "      sudo usermod -aG shield <tên_user_của_bạn> && đăng xuất/đăng nhập lại"
+fi
+
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null; then
+    echo "==> [shield-monitor] Cài & bật privileged helper và shield-agent"
+    systemctl daemon-reload
+    # Guardian canh chừng agent từ bên ngoài (mục B2). Bật RIÊNG và không
+    # coi là lỗi chí mạng: một Guardian không lên được thì Shield vẫn bảo vệ
+    # được máy, còn nếu để nó chặn cả lần cài thì người dùng mất luôn agent.
+    if ! systemctl enable --now shield-guardian.timer; then
+        echo "!!  Không bật được shield-guardian.timer — Shield vẫn chạy, nhưng" >&2
+        echo "!!  sẽ KHÔNG phát hiện được việc agent bị dừng trái phép." >&2
+    fi
+    if ! systemctl enable --now shield-privileged.service shield-agent.service; then
+        echo "!!  Không khởi động được service Shield." >&2
+        systemctl --no-pager --full status shield-privileged.service shield-agent.service || true
+        exit 1
+    fi
+    healthy=0
+    for _attempt in $(seq 1 10); do
+        if systemctl is-active --quiet shield-privileged.service shield-agent.service && \
+           [ -S /run/shield-helper/helper.sock ] && [ -S /run/shield/shield.sock ]; then
+            healthy=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$healthy" -ne 1 ]; then
+        echo "!!  Health check sau cài đặt thất bại; xem log bên dưới." >&2
+        systemctl --no-pager --full status shield-privileged.service shield-agent.service || true
+        journalctl --no-pager -u shield-privileged.service -u shield-agent.service -n 80 || true
+        exit 1
+    fi
+fi
+
+command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
+command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q /usr/share/icons/hicolor || true
+
+cat <<'EOF'
+
+==> Shield đã cài xong.
+    - Mở UI: tìm "Shield" trong menu ứng dụng, hoặc chạy lệnh `shield`.
+    - Lệnh `shield` tự mở UI với group cần thiết; không phải chạy agent riêng.
+    - Kiểm thử headless: shield-assess run --output ./shield-assessment-output
+    - Xem log agent:  journalctl -u shield-agent -f
+    - Xem log guardian: journalctl -u shield-guardian -f
+    - Tắt/tạm dừng giám sát: dùng nút ngay trên thanh tiêu đề của app
+    - Hướng dẫn có sẵn trong tab Help/Trợ giúp của ứng dụng.
+    - Tài liệu đầy đủ: /usr/share/doc/shield-monitor/
+    - Audit rules tùy chọn: /usr/share/shield/audit/99-shield.rules
+
+EOF
+
+exit 0

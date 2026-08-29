@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "id": "shield-safe-pipeline",
+  "version": 1,
+  "authorized_local_only": true,
+  "tests": [
+    {
+      "id": "temporary-process-detection",
+      "title": "Detect a process executing from a temporary directory",
+      "event": {"source": "assessment", "kind": "process_exec", "data": {"pid": 42420, "ppid": 1, "uid": 1000, "auid": 1000, "exe": "/tmp/shield-assessment-safe", "comm": "shield-safe", "start_ticks": "1"}},
+      "expected_event_kinds": ["process_exec"],
+      "expected_rule_ids": ["ENDPOINT_SUSPICIOUS_EXEC_PATH"],
+      "risk_min": 50,
+      "max_latency_ms": 2000
+    },
+    {
+      "id": "sensitive-listener-detection",
+      "title": "Detect a simulated sensitive listener",
+      "event": {"source": "assessment", "kind": "listener_opened", "data": {"protocol": "tcp4", "ip": "127.0.0.1", "port": 445, "inode": "assessment"}},
+      "expected_event_kinds": ["listener_opened"],
+      "expected_rule_ids": ["ENDPOINT_SENSITIVE_LISTENER_OPENED"],
+      "risk_min": 50,
+      "max_latency_ms": 2000
+    },
+    {
+      "id": "file-integrity-detection",
+      "title": "Detect a simulated file-integrity change",
+      "event": {"source": "fim", "kind": "file_modified", "data": {"path": "/tmp/shield-assessment.conf", "before": {"sha256": "old"}, "after": {"path": "/tmp/shield-assessment.conf", "sha256": "new"}}},
+      "expected_event_kinds": ["file_modified"],
+      "expected_rule_ids": ["FILE_INTEGRITY_CHANGED"],
+      "risk_min": 50,
+      "max_latency_ms": 2000
+    },
+    {
+      "id": "usb-insertion-telemetry",
+      "title": "Detect a simulated USB device insertion",
+      "event": {"source": "endpoint", "kind": "usb_added", "data": {"vendor_id": "1d6b", "product_id": "0002", "product": "Shield assessment device"}},
+      "expected_event_kinds": ["usb_added"],
+      "expected_rule_ids": ["ENDPOINT_USB_ADDED"],
+      "risk_min": 15,
+      "max_latency_ms": 2000
+    },
+    {
+      "id": "security-configuration-change",
+      "title": "Detect a simulated protected configuration change",
+      "event": {"source": "endpoint", "kind": "security_file_changed", "data": {"path": "/etc/ssh/sshd_config", "pid": 42421, "exe": "/usr/bin/sed"}},
+      "expected_event_kinds": ["security_file_changed"],
+      "expected_rule_ids": ["ENDPOINT_SECURITY_CONFIG_CHANGED"],
+      "risk_min": 80,
+      "max_latency_ms": 2000
+    },
+    {
+      "id": "deleted-executable-rule",
+      "title": "Detect a simulated deleted executable still running",
+      "event": {"source": "endpoint", "kind": "process_started", "data": {"pid": 42422, "ppid": 1, "uid": 1000, "exe": "/usr/local/bin/shield-test (deleted)", "comm": "shield-test"}},
+      "expected_event_kinds": ["process_started"],
+      "expected_rule_ids": ["ENDPOINT_DELETED_EXECUTABLE"],
+      "risk_min": 80,
+      "max_latency_ms": 2000
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+Package: shield-packet-collector
+Version: VERSION_PLACEHOLDER
+Section: net
+Priority: optional
+Architecture: all
+Maintainer: Zuken Shield Contributors
+Depends: python3 (>= 3.10), python3-scapy, libcap2-bin
+Suggests: shield-monitor
+Description: Optional packet-capture helper for Zuken Shield
+ Observes ARP, DHCP, ICMP, NDP, TCP handshake and outbound DNS packets and
+ publishes structured observations to Zuken Shield over a local Unix socket.
+ .
+ This is a SEPARATE component from the Shield core on purpose. It depends on
+ scapy, which is distributed under the GPL-2.0, while the Shield core targets
+ the Apache-2.0 licence. Running the two as distinct programs in distinct
+ processes keeps that boundary explicit and testable. This packaging choice is
+ an architectural one; it is not, and does not claim to be, a legal conclusion.
+ .
+ Shield works without this package. Endpoint telemetry, file integrity,
+ journal and auditd ingestion, device discovery, correlation, the evidence
+ graph, incident reports, guided Q&A and the response workflow are all
+ unaffected. Installing it adds ARP/DHCP/NDP observation, TCP connection
+ visibility used by port-scan detection, and outbound DNS observation.

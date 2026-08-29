@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "ENDPOINT_DELETED_EXECUTABLE",
+      "version": 1,
+      "enabled": true,
+      "source": "endpoint",
+      "kind": "process_started",
+      "match": {
+        "field": "exe",
+        "operator": "suffix",
+        "value": " (deleted)"
+      },
+      "severity": "critical",
+      "title": "Deleted executable is still running",
+      "detail": "PID {pid} is running deleted executable {exe}",
+      "subject_field": "exe",
+      "playbook": [
+        "snapshot_state"
+      ]
+    },
+    {
+      "id": "RESPONSE_VERIFICATION_FAILED",
+      "version": 1,
+      "enabled": true,
+      "source": "response",
+      "kind": "response_verification_failed",
+      "match": {
+        "field": "action",
+        "operator": "exists",
+        "value": true
+      },
+      "severity": "critical",
+      "title": "A response reported success but the system state did not change",
+      "detail": "Action {action} did not pass verification: {reason}",
+      "subject_field": "action",
+      "playbook": [
+        "snapshot_state"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+Zuken Shield
+Copyright 2026 Zuken Shield Contributors
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full licence text.
+
+--------------------------------------------------------------------------
+THIRD-PARTY DEPENDENCIES
+--------------------------------------------------------------------------
+
+Zuken Shield does not vendor, bundle, or redistribute any third-party source
+code or libraries. Every dependency below is installed separately — from the
+distribution's package archive, or from PyPI — and remains under its own
+licence. The Debian package declares them as dependencies; APT resolves them.
+
+  PySide6 (Qt for Python)  LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+                           Shield relies on the LGPL-3.0 option.
+                           Modules used: QtCore, QtGui, QtWidgets.
+  Qt 6 libraries           LGPL-3.0 or GPL-2.0 (Shield relies on LGPL-3.0)
+  pyqtgraph                MIT
+  scapy                    GPL-2.0, with BSD-2 and BSD-3 components
+  manuf                    Apache-2.0 or GPL-3.0 (dual)
+  reportlab                BSD-3-Clause
+  llama-cpp-python         MIT      (optional; no feature requires it)
+  diskcache                Apache-2.0 (pulled in by llama-cpp-python)
+
+External command-line tools invoked at runtime, never redistributed:
+arp-scan, nmap, tcpdump, nftables, bpftrace, journalctl, notify-send, pkexec.
+
+--------------------------------------------------------------------------
+LGPL-3.0 OBLIGATIONS (PySide6 AND Qt 6)
+--------------------------------------------------------------------------
+
+Shield uses PySide6 and Qt 6 under the LGPL-3.0 option. Because Shield links
+against them dynamically and does not ship them, the obligations are met as
+follows:
+
+  * Notice — this file states that Shield uses PySide6 and Qt 6 under
+    LGPL-3.0, and identifies the modules used.
+  * Replaceability — Shield bundles no Qt or PySide6 libraries. They are
+    installed as separate system packages, and a user may upgrade, patch, or
+    replace them through the package manager without touching Shield. No
+    static linking and no private copies are used.
+  * Source availability — Shield does not redistribute these libraries, so the
+    obligation to supply their source rests with whoever does. Their source is
+    available from the distribution and from the Qt Project.
+  * No additional restrictions — Shield's Apache-2.0 licence places no
+    restriction on modifying, replacing, or reverse-engineering the LGPL
+    libraries for debugging your own modifications.
+
+No GPL-only Qt module is used. Shield imports only QtCore, QtGui, and
+QtWidgets, all of which are offered under LGPL-3.0.
+
+An earlier version of Shield used PyQt6, which Riverbank Computing offers only
+under GPL-3.0 or a commercial licence. That dependency was removed in favour of
+PySide6 precisely so the project's own source can remain Apache-2.0.
+
+--------------------------------------------------------------------------
+PACKET CAPTURE IS A SEPARATE COMPONENT
+--------------------------------------------------------------------------
+
+scapy is distributed under the GPL-2.0. The Shield core does not import it.
+
+Packet capture lives in a separate program, package, and process:
+
+  shield-monitor             Apache-2.0 core. Depends on no GPL-2.0 library.
+                             Does not import scapy — enforced by an AST scan
+                             over the whole core in the test suite.
+
+  shield-packet-collector    Optional component. Depends on python3-scapy and
+                             declares that dependency itself. Ships its own
+                             .deb, its own pyproject, and its own systemd unit.
+
+The two exchange newline-delimited JSON over a local Unix socket. The message
+schema is closed: nine observation types, a fixed key set, regex-checked
+addresses, bounded numbers and strings, and a sanity window on timestamps. No
+pickle, no Python objects, no command channel. The core treats the helper as
+untrusted input, because the helper runs as root and reads packets off the
+network.
+
+This separation is architectural. It makes the licence boundary explicit and
+testable. It is not a legal conclusion, and none is offered here — whether a
+particular way of distributing or combining these components has a particular
+legal consequence is a question for the maintainers and, if they wish, their
+own counsel.
+
+Shield works without the helper. Endpoint telemetry, file integrity, journal
+and auditd ingestion, device discovery, correlation, the evidence graph,
+incident reports, guided Q&A, and the response workflow are unaffected.
+Installing it adds ARP, DHCP, ICMP and NDP observation; TCP handshake
+visibility used by port-scan detection; outbound DNS observation; and the live
+bytes-per-second graph.
+
+The helper's own licence position must be reviewed separately by whoever
+distributes it; it is not covered by the Apache-2.0 licence of the core.

@@ -1,0 +1,23 @@
+# Gói RIÊNG, cố ý không dùng pyproject.toml của Shield.
+#
+# Thành phần này phụ thuộc scapy (GPL-2.0). Lõi Shield nhắm Apache-2.0 và
+# KHÔNG được kéo scapy vào — xem NOTICE. Hai file cấu hình riêng làm ranh giới
+# đó thành thứ công cụ đóng gói cũng nhìn thấy, không chỉ con người.
+[project]
+name = "shield-packet-collector"
+version = "1.0.0"
+description = "Optional packet-capture helper for Zuken Shield"
+requires-python = ">=3.10"
+dependencies = [
+    "scapy>=2.5",
+]
+
+[project.scripts]
+shield-packet-collector = "packet_helper.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["packet_helper*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

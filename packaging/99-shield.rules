@@ -1,0 +1,9 @@
+# Optional auditd rules for Shield event-driven telemetry.
+# Install only after reviewing local audit policy, then restart auditd.
+-a always,exit -F arch=b64 -S execve -k shield_exec
+-a always,exit -F arch=b32 -S execve -k shield_exec
+-w /etc/passwd -p wa -k shield_identity
+-w /etc/group -p wa -k shield_identity
+-w /etc/sudoers -p wa -k shield_sudoers
+-w /etc/systemd/system -p wa -k shield_systemd
+-w /etc/cron.d -p wa -k shield_cron

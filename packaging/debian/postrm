@@ -1,0 +1,28 @@
+#!/bin/bash
+# postrm — dừng service khi gỡ; chỉ xoá dữ liệu (DB/pcap/venv) lúc purge,
+# giữ lại lúc remove thường (đúng quy ước dpkg: remove giữ config/state,
+# purge mới dọn sạch).
+set -e
+
+case "$1" in
+    remove)
+        if command -v systemctl >/dev/null; then
+            systemctl disable --now shield-guardian.timer shield-agent.service shield-privileged.service 2>/dev/null || true
+            systemctl daemon-reload || true
+        fi
+        ;;
+    purge)
+        if command -v systemctl >/dev/null; then
+            systemctl disable --now shield-guardian.timer shield-agent.service shield-privileged.service 2>/dev/null || true
+            systemctl daemon-reload || true
+        fi
+        rm -rf /opt/shield/.venv
+        echo "Đã gỡ Shield. Dữ liệu đã ghi (DB/alert/pcap/snapshot) tại"
+        echo "/var/lib/shield vẫn còn — tự xoá tay nếu muốn:"
+        echo "  sudo rm -rf /var/lib/shield"
+        ;;
+esac
+
+command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
+
+exit 0
