@@ -110,7 +110,7 @@ def test_live_events_are_routed_to_every_matching_tab_only():
     ssh = ws.open(WorkspaceFilter(kinds=frozenset({"ssh_failed_password"})))
     ip = ws.open(WorkspaceFilter(entity_type="ip", entity_value="203.0.113.7"))
     usb = ws.open(WorkspaceFilter(kinds=frozenset({"usb_added"})))
-    assert ws.route(_ev(data={"src_ip": "203.0.113.7"})) == [ssh, ip]
+    assert ws.dispatch(_ev(data={"src_ip": "203.0.113.7"})) == [ssh, ip]
     assert len(ws.tabs[usb].rows) == 0
 
 

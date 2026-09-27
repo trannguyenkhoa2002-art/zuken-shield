@@ -187,7 +187,7 @@ class Workspace:
     def close(self, tab_id: str) -> None:
         self.tabs.pop(tab_id, None)
 
-    def route(self, event: dict) -> list[str]:
+    def dispatch(self, event: dict) -> list[str]:
         """Phân phối một event live; trả về các tab nó khớp."""
         return [tab_id for tab_id, tab in self.tabs.items() if tab.offer(event)]
 

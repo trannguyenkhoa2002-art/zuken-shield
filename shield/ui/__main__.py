@@ -1917,7 +1917,7 @@ class LiveWorkspaceTab(QWidget, I18nMixin):
             view.on_history(list(data.get("events") or []), dict(data.get("summary") or {}))
 
     def on_live_event(self, event: dict) -> None:
-        for tab_id in self.workspace.route(event):
+        for tab_id in self.workspace.dispatch(event):
             view = self.views.get(tab_id)
             if view is not None and view.state.mode == "live":
                 view.refresh_rows()
