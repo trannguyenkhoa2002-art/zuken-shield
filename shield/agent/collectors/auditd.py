@@ -34,11 +34,11 @@ def parse_audit_message(message: str) -> Event | None:
             "uid": _as_int(fields.get("uid"), -1), "auid": _as_int(fields.get("auid"), -1),
             "exe": fields.get("exe", ""), "comm": fields.get("comm", ""),
             "audit_id": fields.get("msg", ""),
-        })
+        }, raw=message)
     key = fields.get("key", "")
     if key in _WATCH_KEYS and audit_type in {"SYSCALL", "PATH"}:
         return Event(now(), "auditd", "security_file_changed", {
             "key": key, "path": fields.get("name", ""), "pid": _as_int(fields.get("pid"), 0),
             "uid": _as_int(fields.get("uid"), -1), "exe": fields.get("exe", ""),
-        })
+        }, raw=message)
     return None

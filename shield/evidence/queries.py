@@ -402,7 +402,7 @@ class EvidenceQueries:
             self._check_deadline(deadline)
             rows = self.conn.execute(
                 "SELECT id, event_id, ts, source, kind, data, origin, trust, "
-                "ts_ingested, content_hash, signature_status, collector_version "
+                "ts_ingested, content_hash, signature_status, collector_version, raw "
                 f"FROM events WHERE {' AND '.join(clauses)} "
                 "ORDER BY ts DESC, id DESC LIMIT ?",
                 values + [capped],
@@ -449,10 +449,12 @@ class EvidenceQueries:
             "kind": row[4], "data": data, "origin": row[6], "trust": row[7],
             "ts_ingested": row[8], "content_hash": row[9],
             "signature_status": row[10], "collector_version": row[11],
-            # Shield KHÔNG lưu payload gốc — bảng `events` chỉ có bản đã chuẩn
-            # hoá. Nói ra bằng dữ liệu, để giao diện không phải đoán, và để
-            # không ai dựng lại một "raw" giả từ các trường đã chuẩn hoá.
-            "raw_retained": False,
+            # Dòng gốc chỉ có khi nguồn THẬT SỰ có một dòng log (journal,
+            # syslog, auditd, probe). Không có thì nói ra bằng dữ liệu, để giao
+            # diện không phải đoán, và để không ai dựng lại một "raw" giả từ
+            # các trường đã chuẩn hoá.
+            "raw": str(row[12] or "") if len(row) > 12 else "",
+            "raw_retained": bool(len(row) > 12 and row[12]),
         }
 
     def get_event(self, event_id: str) -> dict | None:
@@ -468,7 +470,7 @@ class EvidenceQueries:
         def run(deadline):
             row = self.conn.execute(
                 "SELECT id, event_id, ts, source, kind, data, origin, trust, "
-                "ts_ingested, content_hash, signature_status, collector_version "
+                "ts_ingested, content_hash, signature_status, collector_version, raw "
                 "FROM events WHERE event_id != '' AND event_id = ?", (wanted,)).fetchone()
             if row is None:
                 return None

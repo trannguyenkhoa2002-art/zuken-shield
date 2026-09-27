@@ -2161,13 +2161,18 @@ STRINGS: dict[str, tuple[str, str]] = {
     ),
     # Câu quan trọng nhất của màn hình: nói ra khi thứ được hỏi không tồn tại.
     "evidence.raw_not_retained": (
-        "Shield không lưu payload gốc. Bảng event chỉ chứa bản đã chuẩn hoá ở "
-        "trên. Những gì bạn thấy KHÔNG phải bản dựng lại của dữ liệu gốc.",
-        "Original payload was not retained. The event table stores only the "
-        "normalized record above. What you see is NOT a reconstruction of the "
-        "original data.",
+        "Không có dòng log gốc cho event này: nguồn của nó không phát ra dòng log "
+        "(event tổng hợp từ /proc, eBPF...), hoặc event được ghi trước khi Shield "
+        "lưu raw. Những gì bạn thấy ở trên là bản đã chuẩn hoá, KHÔNG phải bản dựng "
+        "lại của dữ liệu gốc.",
+        "No original log line for this event: its source does not emit one "
+        "(synthesised from /proc, eBPF...), or it was stored before Shield kept raw "
+        "lines. What you see above is the normalized record, NOT a reconstruction "
+        "of the original data.",
     ),
-    "evidence.raw_available": ("Có payload gốc.", "Original payload retained."),
+    "evidence.raw_available": (
+        "Dòng log gốc (đã che bí mật)", "Original log line (secrets redacted)",
+    ),
     "evidence.viewer_status": (
         "{rows}/{cap} dòng trên màn hình · {evicted} dòng đã cuộn khỏi khung "
         "(giới hạn màn hình, KHÔNG phải mất telemetry)",

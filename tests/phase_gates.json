@@ -14,6 +14,13 @@
       "acceptance_tests": [
         "tests/test_phase2_gray_zone.py"
       ]
+    },
+    "3": {
+      "title": "Giữ cả dòng log gốc (đã che bí mật, có giới hạn) và event chuẩn hoá",
+      "base": "7f9daff",
+      "acceptance_tests": [
+        "tests/test_phase3_raw_log.py"
+      ]
     }
   }
 }

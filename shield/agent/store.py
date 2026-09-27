@@ -871,6 +871,8 @@ class Store:
             ("content_hash", "TEXT NOT NULL DEFAULT ''"),
             ("signature_status", "TEXT NOT NULL DEFAULT 'unsigned'"),
             ("collector_version", "TEXT NOT NULL DEFAULT ''"),
+            # v11: dòng log gốc (đã che bí mật). Rỗng trên dòng cũ = không lưu.
+            ("raw", "TEXT NOT NULL DEFAULT ''"),
         ):
             if name not in event_columns:
                 self.conn.execute(f"ALTER TABLE events ADD COLUMN {name} {ddl}")
@@ -1291,11 +1293,11 @@ class Store:
         # chập là một lần timeline điều tra nhân đôi.
         self.conn.execute(
             "INSERT OR IGNORE INTO events (ts, source, kind, data, origin, trust, "
-            "event_id, ts_ingested, content_hash, signature_status, collector_version) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "event_id, ts_ingested, content_hash, signature_status, collector_version, raw) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (ev.ts, ev.source, ev.kind, json.dumps(ev.data), origin, trust,
              ev.event_id, ev.ts_ingested, ev.content_hash_, ev.signature_status,
-             ev.collector_version),
+             ev.collector_version, ev.raw),
         )
         self.conn.commit()
         self.touch_collector_event(ev.source, ev.ts)

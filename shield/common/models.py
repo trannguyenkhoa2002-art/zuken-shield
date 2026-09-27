@@ -79,6 +79,12 @@ class Event:
     collector_version: str = ""
     content_hash_: str = ""
     signature_status: str = "unsigned"   # verified | unsigned | invalid
+    # DÒNG LOG GỐC (journal MESSAGE, dòng syslog, bản ghi auditd, dòng probe
+    # gửi), đã CHE bí mật và cắt ở RAW_MAX_CHARS. Rỗng = nguồn này không có
+    # dòng gốc (event tổng hợp từ /proc, eBPF...) — không bao giờ dựng lại một
+    # "raw" giả từ các trường đã chuẩn hoá. Không nằm trong content_hash hay
+    # event_id: thêm raw không được đổi danh tính của bằng chứng đã có.
+    raw: str = ""
 
     def __post_init__(self) -> None:
         # Frozen dataclass: phải ghi qua object.__setattr__. Sinh ở đây thay vì
@@ -90,6 +96,10 @@ class Event:
             object.__setattr__(self, "ts_ingested", time.time())
         if not self.content_hash_:
             object.__setattr__(self, "content_hash_", content_hash(self.source, self.kind, self.data))
+        # Che ở ĐÂY, lúc tạo, không ở lúc ghi DB: event đi qua luồng live IPC
+        # và bộ xuất log trước khi tới database.
+        if self.raw:
+            object.__setattr__(self, "raw", sanitize_raw(self.raw))
 
     @property
     def ts_event(self) -> float:
@@ -129,6 +139,7 @@ class Event:
             collector_version=d.get("collector_version", ""),
             content_hash_=integrity.get("content_hash", d.get("content_hash", "")),
             signature_status=integrity.get("signature_status", d.get("signature_status", "unsigned")),
+            raw=str(d.get("raw") or ""),
         )
 
 
@@ -222,6 +233,29 @@ class Alert:
             evidence_confidence=int(d.get("evidence_confidence", -1)),
             evidence_assessment=dict(d.get("evidence_assessment") or {}),
         )
+
+
+def _raw_limit() -> int:
+    try:
+        return max(0, min(16384, int(os.environ.get("SHIELD_RAW_LOG_MAX_CHARS", "2048"))))
+    except ValueError:
+        return 2048
+
+
+# Trần độ dài dòng gốc lưu lại. 0 = tắt lưu raw. Đọc từ unit file như mọi cấu
+# hình khác của agent.
+RAW_MAX_CHARS = _raw_limit()
+
+
+def sanitize_raw(text: str) -> str:
+    """Che bí mật rồi cắt. Che TRƯỚC khi cắt: cắt trước có thể xẻ đôi một bí
+    mật và để nửa còn lại lọt qua bộ luật nhận dạng."""
+    from shield.common.secrets import redact_text
+
+    if RAW_MAX_CHARS <= 0:
+        return ""
+    cleaned = redact_text(str(text).replace("\x00", ""))
+    return cleaned[:RAW_MAX_CHARS]
 
 
 def now() -> float:

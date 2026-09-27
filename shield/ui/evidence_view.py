@@ -56,9 +56,10 @@ def evidence_detail_rows(event: dict | None, translate, format_ts) -> list[tuple
 
     # Câu trả lời khi thứ được hỏi KHÔNG tồn tại. Đây là dòng quan trọng nhất
     # của màn hình này.
-    rows.append(("evidence.raw_not_retained"
-                 if not event.get("raw_retained") else "evidence.raw_available",
-                 "", "raw"))
+    if event.get("raw_retained"):
+        rows.append(("evidence.raw_available", str(event.get("raw") or ""), "raw"))
+    else:
+        rows.append(("evidence.raw_not_retained", "", "raw"))
     return rows
 
 
