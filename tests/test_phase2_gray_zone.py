@@ -256,3 +256,30 @@ def test_the_table_row_names_missing_evidence_in_both_languages():
     assert gray_zone_view.row_values(entry, "en")[-1] == "Successful login from the same source"
     assert gray_zone_view.row_values(entry, "vi")[1] == "Thiếu bằng chứng"
     assert len(gray_zone_view.headers("vi")) == len(gray_zone_view.row_values(entry, "vi"))
+
+
+def test_every_detector_consumer_filters_near_misses():
+    """Mọi chỗ gọi `detector.handle_event` phải lọc near-miss hoặc định tuyến chúng.
+
+    Agent định tuyến chúng vào vùng xám (run_alert_consumer). Replay,
+    assessment và eval đếm PHÁT HIỆN, nên phải dùng `detections_only`.
+    """
+    import re
+
+    for path in (ROOT / "shield").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"detector\.handle_event\(", text):
+            line = text[:match.start()].rsplit("\n", 1)[-1] + text[match.start():].split("\n", 1)[0]
+            relative = path.relative_to(ROOT).as_posix()
+            if relative == "shield/agent/__main__.py":
+                assert "is_candidate_only" in text, "agent phải định tuyến near-miss vào vùng xám"
+                continue
+            assert "detections_only(" in line, f"{relative}: {line.strip()}"
+
+
+def test_replay_and_eval_do_not_count_near_misses_as_detections(tmp_path):
+    from shield.assessment.replay import replay
+
+    detector = LocalLogDetector(Store(tmp_path / "s.db"))
+    result = replay([_ssh_fail() for _ in range(3)], [detector])
+    assert result["alerts"] == [], "3/5 lần sai không phải một phát hiện"

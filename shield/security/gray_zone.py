@@ -104,6 +104,15 @@ def is_candidate_only(alert: Alert) -> bool:
     return isinstance((alert.evidence or {}).get("gray_zone"), dict)
 
 
+def detections_only(alerts) -> list[Alert]:
+    """Output của detector trừ near-miss — cho mọi nơi đếm PHÁT HIỆN.
+
+    Detector có thể trả cả near-miss (security/gray_zone). Replay, assessment
+    và eval đo phát hiện thật; đếm near-miss vào đó là thổi phồng recall.
+    """
+    return [alert for alert in alerts if not is_candidate_only(alert)]
+
+
 class GrayZoneStore:
     def __init__(self, conn, clock=time.time) -> None:
         self.conn = conn

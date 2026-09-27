@@ -10,6 +10,7 @@ from dataclasses import replace
 from shield.assessment.models import AssessmentProfile, AssessmentResult, TestResult
 from shield.assessment.simulator import SafeSimulator
 from shield.security.scoring import RiskScorer
+from shield.security.gray_zone import detections_only
 
 
 class AssessmentRunner:
@@ -66,7 +67,7 @@ class AssessmentRunner:
         else:
             events = [event.to_dict()]
             for detector in self.detectors:
-                for alert in detector.handle_event(event):
+                for alert in detections_only(detector.handle_event(event)):
                     assessment = self.scorer.assess(alert)
                     alerts.append(replace(alert, risk_score=assessment.score,
                                     evidence_strength=assessment.evidence_strength).to_dict())

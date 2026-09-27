@@ -20,6 +20,7 @@ from pathlib import Path
 
 from shield.common.models import Alert, Event
 from shield.evals.metrics import ConfusionMatrix, DetectorMetrics, MetricsReport
+from shield.security.gray_zone import detections_only
 
 DATASET_DIR = Path(__file__).parent / "datasets"
 _SAFE_ID = re.compile(r"^[a-zA-Z0-9_.-]{1,80}$")
@@ -135,7 +136,7 @@ def run_corpus(corpus: Corpus, detectors, *, hosts: int = 1, days: float = 1.0) 
             )
             for detector in detectors:
                 try:
-                    alerts.extend(detector.handle_event(event))
+                    alerts.extend(detections_only(detector.handle_event(event)))
                 except Exception as exc:  # noqa: BLE001 — detector lỗi là một phát hiện
                     report.failures.append(
                         f"{sample.id}: {type(detector).__name__} ném {type(exc).__name__}: {exc}")
