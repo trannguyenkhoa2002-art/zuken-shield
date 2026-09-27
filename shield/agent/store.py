@@ -33,6 +33,7 @@ from shield.decision.calibration import CALIBRATION_INDEXES, CALIBRATION_SCHEMA
 from shield.evidence.graph import GRAPH_INDEXES, GRAPH_SCHEMA, EvidenceGraph
 from shield.response.jobs import RESPONSE_INDEXES, RESPONSE_SCHEMA
 from shield.security.gray_zone import GRAY_INDEXES, GRAY_SCHEMA, GrayZoneStore
+from shield.security.workspace import WORKSPACE_SCHEMA
 from shield.security.knowledge import KNOWLEDGE_INDEXES, KNOWLEDGE_SCHEMA
 
 logger = logging.getLogger("shield.store")
@@ -412,7 +413,7 @@ CREATE TABLE IF NOT EXISTS system_health (
     detail TEXT NOT NULL,
     updated_ts REAL NOT NULL
 );
-""" + GRAPH_SCHEMA + CALIBRATION_SCHEMA + RESPONSE_SCHEMA + AI_AUDIT_SCHEMA + KNOWLEDGE_SCHEMA + ENRICHMENT_SCHEMA + CHAT_SCHEMA + GRAY_SCHEMA
+""" + GRAPH_SCHEMA + CALIBRATION_SCHEMA + RESPONSE_SCHEMA + AI_AUDIT_SCHEMA + KNOWLEDGE_SCHEMA + ENRICHMENT_SCHEMA + CHAT_SCHEMA + GRAY_SCHEMA + WORKSPACE_SCHEMA
 
 # Index tách khỏi SCHEMA có chủ ý: chúng tham chiếu cột mà một database cũ
 # chưa có (v3 không có events.origin). CREATE TABLE IF NOT EXISTS là no-op

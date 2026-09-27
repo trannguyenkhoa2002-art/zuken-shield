@@ -75,7 +75,7 @@ from shield.common import sdnotify
 from shield.common.models import Alert, Event, now
 from shield.security import PolicyEngine, RiskScorer
 from shield.security.policy import PolicyConfig
-from shield.security import gray_zone
+from shield.security import gray_zone, workspace
 from shield.security.scoring import RiskContext
 from shield.security import trust
 from shield.security.correlation import CorrelationEngine, CorrelationRule
@@ -2559,6 +2559,44 @@ async def handle_command(
                             f"{last.get('rows', 0)} dòng trong {last.get('elapsed_s', 0):.3f}s")
         payload["request_id"] = msg.get("request_id")
         await ipc.send_to(client_id, cmd + "_result", payload)
+
+    elif cmd == "workspace_groups":
+        # Nhóm cho Live Workspace, suy ra từ telemetry — không danh sách viết cứng.
+        groups = await asyncio.to_thread(workspace.discover_groups, store.conn)
+        await ipc.send_to(client_id, "workspace_groups", {"request_id": request_id, "groups": groups})
+
+    elif cmd == "workspace_history":
+        # Replay cho MỘT tab: lịch sử khớp bộ lọc của tab, cũ nhất trước.
+        # Thực thể có trong evidence graph -> vòng đời qua graph (không trần 7
+        # ngày); còn lại -> search_events trong cửa sổ đã chọn (tối đa 7 ngày).
+        # Cả hai đều đi qua EvidenceQueries: có deadline, che bí mật, audit.
+        from shield.evidence.queries import EvidenceQueries, QueryTimeout
+        try:
+            flt = workspace.WorkspaceFilter.from_dict(msg.get("filter") or {})
+            window_s = max(60.0, min(float(msg.get("window_s", 3600) or 3600), 7 * 86400.0))
+            queries = EvidenceQueries(store.conn, caller=f"workspace:{principal}")
+            summary: dict = {}
+            if flt.entity_type in workspace.GRAPH_TYPES:
+                history = await asyncio.to_thread(
+                    queries.entity_history, flt.entity_type, flt.entity_value, 1000)
+                events, summary = history["events"], history["summary"]
+            else:
+                now_ts = time.time()
+                page = await asyncio.to_thread(
+                    lambda: queries.search_events(
+                        start_time=now_ts - window_s, end_time=now_ts,
+                        kind=next(iter(flt.kinds)) if len(flt.kinds) == 1 else "",
+                        source=next(iter(flt.sources)) if len(flt.sources) == 1 else "",
+                        limit=1000))
+                events = page["events"]
+            events = [event for event in events if flt.matches(event)]
+        except (ValueError, TypeError, QueryTimeout) as exc:
+            await ipc.send_to(client_id, "command_error", {"cmd": cmd, "error": str(exc)})
+            return
+        await ipc.send_to(client_id, "workspace_history", {
+            "request_id": request_id, "tab_id": str(msg.get("tab_id", ""))[:32],
+            "filter": flt.to_dict(), "summary": summary,
+            "events": sorted(events, key=lambda e: (e["ts"], e.get("row_id", 0)))})
 
     elif cmd == "gray_zone_list":
         wanted = msg.get("state", "open")

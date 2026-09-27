@@ -37,6 +37,10 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPlainTextEdit,
+    QSplitter,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -68,7 +72,8 @@ from shield.ui.evidence_view import (
     evidence_detail_rows,
 )
 from shield.ui.incident_view import correlation_reason_rows
-from shield.ui import gray_zone_view
+from shield.ui import gray_zone_view, workspace_view
+from shield.security.workspace import MAX_TABS, Workspace, WorkspaceFilter
 from shield.security.gray_zone import GrayZoneStore
 from shield.ai import chat_router
 from shield.ui import chat_view, report_view
@@ -1710,6 +1715,212 @@ class TrafficTab(QWidget, I18nMixin):
         self._refresh_label()
         if self._curve is not None:
             self._curve.setData(list(self._data))
+
+
+class WorkspaceTabView(QWidget):
+    """Một tab của Live Workspace: Live / Pause / Search / Replay."""
+
+    def __init__(self, workspace_tab: "LiveWorkspaceTab", tab_id: str) -> None:
+        super().__init__()
+        self.owner = workspace_tab
+        self.tab_id = tab_id
+        self.state = workspace_tab.workspace.tabs[tab_id]
+        layout = QVBoxLayout(self)
+        controls = row_layout()
+        self.live_btn = QPushButton()
+        self.live_btn.setCheckable(True)
+        self.live_btn.setChecked(True)
+        self.live_btn.toggled.connect(self._on_live_toggled)
+        controls.addWidget(self.live_btn)
+        self.window_combo = QComboBox()
+        for seconds, label in workspace_view.REPLAY_WINDOWS:
+            self.window_combo.addItem(label, seconds)
+        controls.addWidget(self.window_combo)
+        self.replay_btn = QPushButton(t("workspace.replay"))
+        self.replay_btn.clicked.connect(self._replay)
+        controls.addWidget(self.replay_btn)
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText(t("workspace.search"))
+        self.search_box.textChanged.connect(lambda _t: self.refresh_rows())
+        controls.addWidget(self.search_box)
+        layout.addLayout(controls)
+        self.status_label = QLabel()
+        layout.addWidget(self.status_label)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.table = QTableWidget(0, len(workspace_view.COLUMNS))
+        self.table.setHorizontalHeaderLabels(workspace_view.headers(current_lang()))
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self.table.itemSelectionChanged.connect(self._show_detail)
+        splitter.addWidget(self.table)
+        self.detail = QPlainTextEdit()
+        self.detail.setReadOnly(True)
+        splitter.addWidget(self.detail)
+        layout.addWidget(splitter)
+        self._shown: list[dict] = []
+        self._update_live_label()
+        self.refresh_rows()
+
+    def _update_live_label(self) -> None:
+        self.live_btn.setText(t("workspace.live") if self.state.mode == "live" else t("workspace.paused"))
+
+    def _on_live_toggled(self, live: bool) -> None:
+        if live:
+            self.state.resume()
+        else:
+            self.state.pause()
+        self._update_live_label()
+        self.refresh_rows()
+
+    def _replay(self) -> None:
+        self.live_btn.setChecked(False)
+        self.owner.request_history(self.tab_id, int(self.window_combo.currentData() or 3600))
+
+    def on_history(self, events: list[dict], summary: dict) -> None:
+        self.state.load_replay(events)
+        if summary:
+            self.status_label.setToolTip(json.dumps(summary, default=str))
+        self.refresh_rows()
+
+    def refresh_rows(self) -> None:
+        text = self.search_box.text().strip()
+        rows = self.state.search(text) if text else list(self.state.rows)
+        self._shown = rows[-500:]
+        self.table.setRowCount(0)
+        for event in reversed(self._shown):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            for col, value in enumerate(workspace_view.row_values(event)):
+                self.table.setItem(row, col, QTableWidgetItem(value))
+        self.status_label.setText(workspace_view.status_text(self.state, current_lang()))
+
+    def _show_detail(self) -> None:
+        items = self.table.selectedItems()
+        if not items:
+            return
+        index = len(self._shown) - 1 - items[0].row()
+        if 0 <= index < len(self._shown):
+            self.detail.setPlainText(workspace_view.detail_text(self._shown[index]))
+
+
+class LiveWorkspaceTab(QWidget, I18nMixin):
+    """Tối đa 10 tab log song song, nhóm tự khám phá từ telemetry.
+
+    Màn hình THỦ CÔNG: không tạo alert/incident, không đụng engine correlation.
+    """
+
+    def __init__(self, client: SocketClient) -> None:
+        super().__init__()
+        self._init_i18n()
+        self.client = client
+        self.workspace = Workspace()
+        self.views: dict[str, WorkspaceTabView] = {}
+        self._groups: list[dict] = []
+        layout = QHBoxLayout(self)
+        left = QVBoxLayout()
+        self.groups_label = QLabel()
+        self.bind(lambda: self.groups_label.setText(t("workspace.groups")))
+        left.addWidget(self.groups_label)
+        self.group_list = QListWidget()
+        self.group_list.itemDoubleClicked.connect(self._open_group)
+        left.addWidget(self.group_list)
+        self.refresh_btn = QPushButton()
+        self.bind(lambda: self.refresh_btn.setText(t("workspace.refresh_groups")))
+        self.refresh_btn.clicked.connect(self.refresh_groups)
+        left.addWidget(self.refresh_btn)
+        self.new_btn = QPushButton()
+        self.bind(lambda: self.new_btn.setText(t("workspace.new_tab")))
+        self.new_btn.clicked.connect(self._new_tab_dialog)
+        left.addWidget(self.new_btn)
+        layout.addLayout(left, 1)
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self._close_tab)
+        layout.addWidget(self.tabs, 4)
+
+    def refresh_groups(self) -> None:
+        self.client.send_command({"cmd": "workspace_groups"})
+
+    def on_groups(self, groups: list[dict]) -> None:
+        self._groups = list(groups)
+        self.group_list.clear()
+        for group in self._groups:
+            item = QListWidgetItem(workspace_view.group_label(group))
+            item.setData(Qt.ItemDataRole.UserRole, group.get("filter"))
+            self.group_list.addItem(item)
+
+    def open_filter(self, flt: WorkspaceFilter) -> str | None:
+        try:
+            tab_id = self.workspace.open(flt)
+        except ValueError:
+            QMessageBox.information(self, t("workspace.title"), t("workspace.too_many", max=MAX_TABS))
+            return None
+        view = WorkspaceTabView(self, tab_id)
+        self.views[tab_id] = view
+        self.tabs.addTab(view, flt.label()[:40])
+        self.tabs.setCurrentWidget(view)
+        return tab_id
+
+    def _open_group(self, item: QListWidgetItem) -> None:
+        tab_id = self.open_filter(WorkspaceFilter.from_dict(item.data(Qt.ItemDataRole.UserRole) or {}))
+        if tab_id:
+            self.request_history(tab_id, 86400)
+
+    def _new_tab_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t("workspace.new_tab"))
+        form = QVBoxLayout(dialog)
+        kind, source, value, text = QLineEdit(), QLineEdit(), QLineEdit(), QLineEdit()
+        entity = QComboBox()
+        entity.addItem("—", "")
+        for name in workspace_view.entity_types():
+            entity.addItem(name, name)
+        for label_key, widget in (("workspace.kind", kind), ("workspace.source", source),
+                                  ("workspace.entity", entity), ("workspace.value", value),
+                                  ("workspace.text", text)):
+            form.addWidget(QLabel(t(label_key)))
+            form.addWidget(widget)
+        ok = QPushButton("OK")
+        ok.clicked.connect(dialog.accept)
+        form.addWidget(ok)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            flt = WorkspaceFilter(
+                kinds=frozenset({kind.text().strip()}) if kind.text().strip() else frozenset(),
+                sources=frozenset({source.text().strip()}) if source.text().strip() else frozenset(),
+                entity_type=str(entity.currentData() or ""),
+                entity_value=value.text().strip() if entity.currentData() else "",
+                text=text.text().strip())
+        except ValueError as exc:
+            QMessageBox.warning(self, t("workspace.title"), str(exc))
+            return
+        self.open_filter(flt)
+
+    def _close_tab(self, index: int) -> None:
+        view = self.tabs.widget(index)
+        if isinstance(view, WorkspaceTabView):
+            self.workspace.close(view.tab_id)
+            self.views.pop(view.tab_id, None)
+        self.tabs.removeTab(index)
+
+    def request_history(self, tab_id: str, window_s: int) -> None:
+        state = self.workspace.tabs.get(tab_id)
+        if state is not None:
+            self.client.send_command({"cmd": "workspace_history", "tab_id": tab_id,
+                                      "filter": state.filter.to_dict(), "window_s": window_s})
+
+    def on_history(self, data: dict) -> None:
+        view = self.views.get(str(data.get("tab_id", "")))
+        if view is not None:
+            view.on_history(list(data.get("events") or []), dict(data.get("summary") or {}))
+
+    def on_live_event(self, event: dict) -> None:
+        for tab_id in self.workspace.route(event):
+            view = self.views.get(tab_id)
+            if view is not None and view.state.mode == "live":
+                view.refresh_rows()
 
 
 class GrayZoneTab(QWidget, I18nMixin):
@@ -4985,6 +5196,7 @@ class MainWindow(QMainWindow):
         self.log_tab = LogTab()
         self.log_tab.load_from_store(self.store)
         self.evidence_tab = EvidenceTab(self.client)
+        self.workspace_tab = LiveWorkspaceTab(self.client)
         self.reports_tab = ReportsTab(self.store, self.client)
         self.dns_tab = DnsTab(self.client)
         self.wifi_tab = WifiPasswordsTab(self.client)
@@ -5001,6 +5213,7 @@ class MainWindow(QMainWindow):
             (self.traffic_tab, "nav.traffic"),
             (self.log_tab, "nav.log"),
             (self.evidence_tab, "nav.evidence"),
+            (self.workspace_tab, "nav.workspace"),
             (self.dns_tab, "nav.dns"),
             (self.wifi_tab, "nav.wifi"),
             (self.advanced_tab, "nav.security_center"),
@@ -5027,6 +5240,7 @@ class MainWindow(QMainWindow):
             ]),
             ("section.investigation", "header.investigation_desc", [
                 (self.evidence_tab, "nav.evidence"),
+                (self.workspace_tab, "nav.workspace"),
                 (self.advanced_tab, "nav.security_center"),
                 (self.response_tab, "nav.response"),
                 (self.assessment_tab, "nav.assessment"),
@@ -5254,6 +5468,11 @@ class MainWindow(QMainWindow):
             self.log_tab.prepend_event(msg["data"])
         elif msg_type == "evidence_event":
             self.evidence_tab.on_event(msg["data"])
+            self.workspace_tab.on_live_event(msg["data"])
+        elif msg_type == "workspace_groups":
+            self.workspace_tab.on_groups((msg.get("data") or {}).get("groups", []))
+        elif msg_type == "workspace_history":
+            self.workspace_tab.on_history(msg.get("data") or {})
         elif msg_type == "expert_search_events_result":
             self.evidence_tab.on_search_result(msg["data"])
         elif msg_type == "expert_get_event_result":

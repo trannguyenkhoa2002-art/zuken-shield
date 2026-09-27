@@ -21,6 +21,13 @@
       "acceptance_tests": [
         "tests/test_phase3_raw_log.py"
       ]
+    },
+    "4": {
+      "title": "Live Workspace: 10 tab song song, Live/Pause/Search/Replay, nhóm tự khám phá, vòng đời thực thể",
+      "base": "7bdccb4",
+      "acceptance_tests": [
+        "tests/test_phase4_live_workspace.py"
+      ]
     }
   }
 }
