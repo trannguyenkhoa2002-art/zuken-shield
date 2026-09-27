@@ -4,7 +4,7 @@ Section: net
 Priority: optional
 Architecture: all
 Maintainer: Zuken Shield Contributors
-Depends: python3 (>= 3.10), python3-scapy, libcap2-bin
+Depends: python3 (>= 3.10), python3-venv, python3-setuptools, python3-scapy, libcap2-bin
 Suggests: shield-monitor
 Description: Optional packet-capture helper for Zuken Shield
  Observes ARP, DHCP, ICMP, NDP, TCP handshake and outbound DNS packets and

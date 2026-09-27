@@ -66,8 +66,10 @@ against detection rules, and preserves the evidence behind every conclusion.
   `nmap -sV` for service banners on hosts you have marked trusted.
 - It is **not** antivirus and it does not remove malware.
 - It is **not** a SIEM. It monitors one host and its local network, not a fleet.
-- It does **not** send anything off the machine. There is no cloud service, no
-  telemetry upload, and no remote AI.
+- Monitoring data stays local by default. There is no telemetry upload to the
+  developers or remote AI. Optional Telegram notifications send alert text to
+  Telegram only when an administrator configures both bot token and chat ID;
+  see `docs/PRIVACY.md`.
 - It is **not** enterprise-ready. There is no multi-tenancy, no central
   management, and no support contract.
 
@@ -196,8 +198,9 @@ walkthroughs from telemetry to incident report.
   operations over a Unix socket. The agent cannot run arbitrary commands.
 - The **interface** runs as your user and talks to the agent over a Unix socket
   with a closed command set.
-- **Evidence stays local.** The database, PCAPs, and snapshots live in
-  `/var/lib/shield/`. Nothing is uploaded.
+- **Evidence storage stays local.** The database, PCAPs, and snapshots live in
+  `/var/lib/shield/`. Optional, explicitly configured Telegram notifications
+  transmit redacted alert text, not these files.
 - **Response actions** are levelled, reversible where possible, verified against
   observable state, and rolled back on failure.
 - **Secrets are redacted** before anything is stored or displayed.

@@ -62,14 +62,14 @@ def parse_line(raw: bytes) -> tuple[str, str, dict, float] | None:
         return None
     try:
         message = json.loads(raw)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         return None
     if not isinstance(message, dict):
         return None
-    if message.get("version") != SCHEMA_VERSION:
+    if type(message.get("version")) is not int or message["version"] != SCHEMA_VERSION:
         return None
     observation = message.get("event_type")
-    if observation not in OBSERVATIONS:
+    if not isinstance(observation, str) or observation not in OBSERVATIONS:
         return None
     source, kind = OBSERVATIONS[observation]
     if message.get("collector") != source:
@@ -80,7 +80,7 @@ def parse_line(raw: bytes) -> tuple[str, str, dict, float] | None:
     now = time.time()
     # Mốc thời gian phải HỢP LÝ: helper không được viết lại lịch sử, cũng không
     # được đặt sự kiện vào tương lai để lách cửa sổ tương quan.
-    if not (now - 3600) <= float(timestamp) <= (now + 60):
+    if not (now - 3600) <= timestamp <= (now + 60):
         return None
     payload = clean_payload(message.get("payload"))
     if payload is None:
@@ -94,6 +94,15 @@ async def ingest_loop(event_bus: Bus, *, socket_path: str = SOCKET_PATH,
     """Kết nối helper, đọc quan sát, phát Event. Helper vắng mặt là BÌNH THƯỜNG."""
     health = health or PacketIngestHealth()
     window_start, window_count = time.monotonic(), 0
+
+    def record_connection(state: str) -> None:
+        if store is not None:
+            with contextlib.suppress(Exception):
+                store.set_collector_health(
+                    "packet_ingest", "helper", health.connected,
+                    "helper connected" if health.connected else health.last_error,
+                    state=state, last_event=health.last_event_ts,
+                    error_message="" if health.connected else health.last_error)
 
     while True:
         if not os.path.exists(socket_path):
@@ -109,10 +118,11 @@ async def ingest_loop(event_bus: Bus, *, socket_path: str = SOCKET_PATH,
             await asyncio.sleep(RECONNECT_DELAY_S)
             continue
         try:
-            reader, writer = await asyncio.open_unix_connection(socket_path)
-        except (OSError, asyncio.CancelledError) as exc:
+            reader, writer = await asyncio.open_unix_connection(socket_path, limit=MAX_LINE_BYTES)
+        except OSError as exc:
             health.connected = False
             health.last_error = f"{type(exc).__name__}: {exc}"
+            record_connection("degraded")
             if not retry:
                 return
             await asyncio.sleep(RECONNECT_DELAY_S)
@@ -121,14 +131,25 @@ async def ingest_loop(event_bus: Bus, *, socket_path: str = SOCKET_PATH,
         health.connected = True
         health.connects += 1
         logger.info("Nối được helper bắt gói tại %s", socket_path)
-        if store is not None:
-            with contextlib.suppress(Exception):
-                store.set_collector_health("packet_ingest", "helper", True, "")
+        record_connection("running")
+        disconnected_state = "degraded"
         try:
             while True:
-                raw = await reader.readline()
-                if not raw:
-                    break                       # helper đóng kết nối hoặc chết
+                try:
+                    raw = await reader.readuntil(b"\n")
+                except asyncio.LimitOverrunError:
+                    # Close this stream; reconnect with a fresh bounded buffer.
+                    # Never drain an unbounded line supplied by an untrusted helper.
+                    health.rejected += 1
+                    health.last_error = f"oversized packet frame (limit {MAX_LINE_BYTES} bytes)"
+                    break
+                except asyncio.IncompleteReadError as exc:
+                    if exc.partial:
+                        health.rejected += 1
+                        health.last_error = "incomplete packet frame"
+                    elif not health.last_error:
+                        health.last_error = "helper disconnected"
+                    break
                 now = time.monotonic()
                 if now - window_start >= 1.0:
                     window_start, window_count = now, 0
@@ -136,9 +157,10 @@ async def ingest_loop(event_bus: Bus, *, socket_path: str = SOCKET_PATH,
                 if window_count > MAX_EVENTS_PER_S:
                     health.throttled += 1
                     continue
-                parsed = parse_line(raw.strip())
+                parsed = parse_line(raw[:-1])
                 if parsed is None:
                     health.rejected += 1
+                    health.last_error = "invalid packet frame"
                     continue
                 source, kind, data, ts = parsed
                 health.accepted += 1
@@ -147,10 +169,15 @@ async def ingest_loop(event_bus: Bus, *, socket_path: str = SOCKET_PATH,
                     Event(ts=ts, source=source, kind=kind, data=data))
         except (ConnectionResetError, asyncio.IncompleteReadError, OSError) as exc:
             health.last_error = f"{type(exc).__name__}: {exc}"
+        except asyncio.CancelledError:
+            disconnected_state = "stopped"
+            raise
         finally:
             health.connected = False
-            with contextlib.suppress(Exception):
-                writer.close()
+            record_connection(disconnected_state)
+            writer.close()
+            with contextlib.suppress(OSError, TimeoutError):
+                await asyncio.wait_for(writer.wait_closed(), 1.0)
         if not retry:
             return
         await asyncio.sleep(RECONNECT_DELAY_S)

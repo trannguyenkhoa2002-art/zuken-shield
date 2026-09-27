@@ -13,18 +13,22 @@ SHIELD_TELEGRAM_CHAT_ID) — Settings tab để nhập trong UI là giai đoạn
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
+import pwd
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 from shield.common.models import Alert
+from shield.common.secrets import redact_text
 
 logger = logging.getLogger("shield.notifier")
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
+NOTIFY_TIMEOUT_S = 5.0
 
 
 def desktop_session_uids() -> list[int]:
@@ -57,14 +61,21 @@ def desktop_session_uids() -> list[int]:
 async def _notify_send_as(uid: int | None, alert: Alert) -> bool:
     """Chạy notify-send. `uid=None` nghĩa là chạy bằng chính user hiện tại
     (chế độ dev, agent không chạy bằng root)."""
-    args = ["notify-send", "-u", "critical", f"Shield: {alert.title}", alert.detail]
+    args = ["/usr/bin/notify-send", "-u", "critical",
+            f"Shield: {redact_text(alert.title)}", redact_text(alert.detail)]
     env = dict(os.environ)
     if uid is not None:
         env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{uid}/bus"
         env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
         # setpriv có sẵn trong util-linux (mọi bản Debian/Ubuntu/Kali), không
         # cần sudo và không đọc file cấu hình nào — phù hợp chạy từ daemon.
-        args = ["setpriv", "--reuid", str(uid), "--regid", str(uid), "--init-groups", *args]
+        try:
+            gid = pwd.getpwuid(uid).pw_gid
+        except KeyError:
+            logger.warning("Không tìm thấy tài khoản desktop uid=%s", uid)
+            return False
+        args = ["/usr/bin/setpriv", "--reuid", str(uid), "--regid", str(gid), "--init-groups", *args]
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -72,20 +83,30 @@ async def _notify_send_as(uid: int | None, alert: Alert) -> bool:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, stderr = await proc.communicate()
+        _, stderr = await asyncio.wait_for(proc.communicate(), NOTIFY_TIMEOUT_S)
         if proc.returncode != 0:
-            logger.debug(
+            logger.warning(
                 "notify-send (uid=%s) trả về %s: %s",
-                uid, proc.returncode, stderr.decode(errors="ignore").strip(),
+                uid, proc.returncode, redact_text(stderr.decode(errors="replace").strip())[:500],
             )
             return False
         return True
     except FileNotFoundError as e:
-        logger.debug("Thiếu lệnh để gửi thông báo desktop (%s) — bỏ qua.", e)
+        logger.warning("Thiếu lệnh để gửi thông báo desktop: %s", e.filename)
         return False
-    except Exception:
-        logger.exception("Lỗi gửi notify-send")
+    except TimeoutError:
+        logger.warning("notify-send (uid=%s) quá hạn %.1fs; kiểm tra D-Bus của phiên desktop", uid, NOTIFY_TIMEOUT_S)
         return False
+    except Exception as exc:
+        logger.warning("Lỗi gửi notify-send (uid=%s): %s", uid, type(exc).__name__)
+        return False
+    finally:
+        # Includes caller cancellation: never leave a blocked sender behind.
+        if proc is not None and proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(OSError, TimeoutError):
+                await asyncio.wait_for(proc.wait(), 1.0)
 
 
 async def notify_desktop(alert: Alert) -> None:
@@ -102,8 +123,7 @@ async def notify_desktop(alert: Alert) -> None:
     results = await asyncio.gather(*(_notify_send_as(uid, alert) for uid in uids))
     if not any(results):
         logger.warning(
-            "Không gửi được thông báo desktop tới phiên nào (%s) — kiểm tra đã cài "
-            "libnotify-bin (notify-send) chưa.",
+            "Không gửi được thông báo desktop tới phiên nào (%s) — xem lỗi notify-send phía trên.",
             uids,
         )
 
@@ -126,10 +146,12 @@ async def notify_telegram(alert: Alert) -> None:
         logger.debug("Chưa cấu hình SHIELD_TELEGRAM_TOKEN/SHIELD_TELEGRAM_CHAT_ID — bỏ qua.")
         return
 
-    text = f"🛑 Shield [{alert.severity.upper()}] {alert.title}\n{alert.detail}"
+    text = redact_text(f"🛑 Shield [{alert.severity.upper()}] {alert.title}\n{alert.detail}")
     result = await asyncio.to_thread(_send_telegram_sync, token, chat_id, text)
     if isinstance(result, Exception):
-        logger.error("Gửi Telegram thất bại: %s", result)
+        # HTTP/URL exceptions can include the credential embedded in the URL.
+        reason = redact_text(str(result).replace(token, "[đã che]"))[:500]
+        logger.error("Gửi Telegram thất bại (%s): %s", type(result).__name__, reason)
     elif result != 200:
         logger.error("Telegram trả về status %s", result)
     else:
