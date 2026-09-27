@@ -604,13 +604,15 @@ async def maintenance_loop(store: Store, alert_bus: Bus) -> None:
             automatic_backup = store.get_baseline("automatic_backup_enabled") != "0"
             last_backup = float(store.get_baseline("database_last_backup") or 0)
             if automatic_backup and time.time() - last_backup >= 86400:
-                # Dọn TRƯỚC khi chép: file tạm bỏ dở của lượt bị giết và các
-                # bản cũ vượt số lượng giữ lại, để lượt chép mới có chỗ.
+                backup_path = store.path.parent / "backups" / f"shield-{int(time.time())}.db"
+                await asyncio.to_thread(store.backup_database, backup_path)
+                # Dọn SAU khi chép xong: dọn trước thì luôn còn keep+1 bản (đo
+                # được trên máy thật: 4 bản với SHIELD_BACKUP_KEEP=3), và nếu
+                # lượt chép hỏng thì ta đã xoá mất một bản tốt trước khi có bản
+                # thay thế.
                 pruned = await asyncio.to_thread(store.prune_backups, backup_keep_count())
                 if pruned["deleted"] or pruned["temporary_deleted"]:
                     logger.info("Dọn sao lưu cũ: %s", pruned)
-                backup_path = store.path.parent / "backups" / f"shield-{int(time.time())}.db"
-                await asyncio.to_thread(store.backup_database, backup_path)
                 store.set_baseline("database_last_backup", str(time.time()))
                 store.set_system_health("last_backup", time.time(), "unix_ts", "healthy", str(backup_path))
             checkpoint_path = Path(os.environ.get("SHIELD_FORENSIC_CHECKPOINT", str(store.path) + ".checkpoint.json"))

@@ -208,3 +208,12 @@ def test_the_size_cap_still_trims_events_once_the_graph_is_clean(tmp_path):
         store.insert_event(Event(time.time(), "test", "process_exec", {"i": index}))
     store.conn.commit()
     assert store._enforce_size_cap(1, batch=100) == 100
+
+
+def test_backups_are_pruned_after_the_new_copy_exists():
+    """Dọn trước khi chép để lại keep+1 bản (thấy trên máy thật) và có thể xoá
+    một bản tốt trước khi bản mới chép xong."""
+    source = AGENT.read_text(encoding="utf-8")
+    start = source.index("async def maintenance_loop(")
+    body = source[start:source.index("\ndef ", start)]
+    assert body.index("store.backup_database") < body.index("store.prune_backups")
