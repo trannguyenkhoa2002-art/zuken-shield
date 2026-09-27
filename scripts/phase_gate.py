@@ -146,12 +146,20 @@ def main() -> int:
     per_file_ok = all(
         any(Path(t).stem in name for name in failed_at_base) for t in tests)
     ratio = len(failed_at_base) / max(1, len(head_results))
+    # Minh bạch LOẠI fail ở gốc: "collection_error" (module/tên chưa tồn tại —
+    # hợp lệ khi giai đoạn thêm module mới, nhưng yếu hơn) hay "assertion"
+    # (hành vi cũ bị test bắt sai — bằng chứng mạnh nhất).
+    base_log = (out / "acceptance-base.log").read_text(encoding="utf-8", errors="replace")
+    failure_mode = ("collection_error" if "ERROR collecting" in base_log or "ImportError" in base_log
+                    and len(base_results) < len(head_results) else "assertion")
     isolated = imported.startswith(str(worktree))
     checks["fails_on_base"] = {
         "ok": isolated and per_file_ok and (ratio >= 0.5 or len(base_results) < len(head_results)),
         "detail": (f"base={base[:12]} imported={imported} isolated={isolated}; "
                    f"{len(failed_at_base)} failed/error of {len(base_results)} collected at base "
-                   f"(head has {len(head_results)}); every file fails at base: {per_file_ok}"),
+                   f"(head has {len(head_results)}); every file fails at base: {per_file_ok}; "
+                   f"failure mode at base: {failure_mode}"),
+        "failure_mode": failure_mode,
     }
 
     # 4. Lint và kiểu.
