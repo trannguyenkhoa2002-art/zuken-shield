@@ -13,9 +13,11 @@ These are the gaps that keep Beta 1.0 a beta.
   package maintainer scripts.
 - **Soak testing** at 24 hours, 72 hours, 7 days, and 30 days on the packaged
   build, with memory, database growth, and event-loop latency recorded.
-- **Confirm the startup watchdog fix over time.** The timing defect was found
-  and fixed in Beta 1.0 and verified across repeated starts and a real cold
-  boot; what is still missing is the same evidence over a long-duration soak.
+- **Confirm watchdog stability over time.** The Beta 1.0 startup fix did not
+  hold (41 timeouts in the month after release). The lock-holding backup and
+  integrity check and the `Type=simple` start accounting are fixed since; what
+  is missing is a soak — cold boots, suspend/resume and daily maintenance —
+  with zero timeouts.
 - **Review the packet helper's own licence position**, as `NOTICE` records. The
   PyQt6 (GPL-3.0) dependency was removed by migrating the interface to PySide6
   under LGPL-3.0, and scapy (GPL-2.0) was moved out of the core into the

@@ -5,6 +5,55 @@ and is not reproduced here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — internal package version `3.0.0a3`
+
+### Fixed
+
+- **Agent killed by the watchdog after the Beta 1.0 "fix".** Two causes, both
+  reproduced on a copy of a 2.5 GB production database:
+  - the daily backup and the full integrity check ran on the shared SQLite
+    connection and held its lock for the whole copy/scan (integrity check alone:
+    18.6 s with a warm cache), while the watchdog ping waits on that lock. The
+    agent restarted, the backup was still due, and the cycle repeated until
+    systemd gave up. Both now use a separate read-only connection; the probe
+    wait dropped from 18.1 s to 0 ms on the same database. The full integrity
+    check now runs at most once a day instead of on every maintenance pass.
+  - `Type=simple` counted `WatchdogSec` from process start, so a cold start
+    longer than 90 s was killed before it logged anything. The unit is now
+    `Type=notify` with `TimeoutStartSec=300`; `READY=1` is sent only after the
+    store answers. `WatchdogSec=90` is unchanged.
+- **Size cap deleted real events to make room for orphaned graph edges.** The
+  evidence graph was ~1.6 GB of a 2 GB cap, and ~90 % of scanned edges had no
+  surviving evidence, yet each pass deleted 50,000 events first. The size cap
+  now prunes orphaned graph data before trimming any event.
+- **Backups were never pruned** (85 GB on the developer's machine). The agent
+  now keeps the newest `SHIELD_BACKUP_KEEP` (default 3) daily and pre-upgrade
+  backups and removes temporary files left by an interrupted backup.
+  Pre-migration backups are kept.
+- **Desktop notifications never arrived.** The root agent switched user with
+  `setpriv`, which its own hardening blocks (`setresuid failed: Operation not
+  permitted` on every attempt). Notifications now go over IPC to the new
+  `shield-notify` user service, which also warns when the agent is unreachable
+  for two minutes.
+- Mixed IPv4/IPv6 authorised ranges made `scan_authorized_range` raise
+  `TypeError`; the live evidence feed task was not tracked for shutdown;
+  `pin_gateway_arp`, evasion and router polling passed `None` as an interface
+  when none could be detected.
+- Packet ingest hardening, bounded notifier delivery and test fixture cleanup
+  from the 2026-09-11 audit.
+
+### Quality
+
+- ruff: 51 findings → 0. mypy: 136 errors → 0.
+
+### Documentation corrections
+
+- Removed or corrected statements that the code or evidence did not support:
+  the watchdog "fixed and verified" claim, "ten" report sections (there are
+  eleven), the "58 rule identifiers" count (no reproducible count exists),
+  "roughly a millisecond" (never benchmarked), "all data stays on the machine"
+  (optional Telegram), and "restricted capabilities" for the agent.
+
 ## [Beta 1.0] — 2026-08-29
 
 Internal package version: `3.0.0a2`.
@@ -20,7 +69,7 @@ First public release.
   journal and auditd ingestion, and syslog reception from authorised sources.
 - Network telemetry: ARP and neighbour observation, DNS resolver monitoring,
   connection and flow aggregation, device discovery, and traffic statistics.
-- 58 detection rule identifiers spanning authentication attacks,
+- Detection rules spanning authentication attacks,
   reconnaissance, malware-execution behaviour chains, network tampering
   (ARP, DNS, DHCP, ICMP redirect), device inventory, file and configuration
   tampering, risky service exposure, and Shield's own integrity.
@@ -32,11 +81,12 @@ First public release.
   exists without a valid evidence reference.
 - Expert Evidence: a read-only query surface over the event store, with hard
   row limits, timeouts, redaction, and an audit trail.
-- Deterministic incident reports: ten fixed sections built only from measured
-  data, each carrying an explicit epistemic state.
+- Deterministic incident reports: eleven fixed sections — nine built only from
+  measured data, each carrying an explicit epistemic state, and two reserved
+  model prose slots that are unused.
 - Guided incident Q&A: five closed questions — summarise, explain evidence, how
   certain, related process, what to inspect next — answered deterministically
-  from the report in roughly a millisecond. Questions outside the set, and
+  from the report without a model. Questions outside the set, and
   requests to take action, are refused deterministically.
 
 ### Response
@@ -68,8 +118,10 @@ First public release.
 
 ### Privacy
 
-- All data stays on the machine. No cloud service, no telemetry upload, no
-  remote AI.
+- Monitoring data stays on the machine by default. No cloud service, no
+  telemetry upload, no remote AI. Optional Telegram notifications, when an
+  administrator configures them, send redacted alert text; see
+  `docs/PRIVACY.md`.
 - Secret redaction applied before storage and before display.
 
 ### Known limitations
@@ -82,8 +134,7 @@ First public release.
 - Response actions beyond `block_ip` have had limited real-world exercise.
 - Interface is Vietnamese and English only.
 - The startup watchdog timing defect that restarted the agent around cold boot
-  was identified and fixed in this release. It is verified across repeated
-  service starts and a real cold boot with zero watchdog timeouts, but not yet
-  over a long-duration soak.
+  was addressed in this release. *Correction (2026-09-27): the fix was not
+  sufficient; see Unreleased.*
 - No language model is used by any feature. The isolated worker infrastructure
   is present but dormant; see the release notes for why.

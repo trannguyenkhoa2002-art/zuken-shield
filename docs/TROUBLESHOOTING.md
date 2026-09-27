@@ -57,10 +57,35 @@ The agent pings the systemd watchdog only when the event loop is running *and*
 the database answers, so a ping failure is a real stall rather than a formality.
 Database maintenance is bounded per pass specifically so it cannot cause this.
 
-Restarts around cold boot were caused by a watchdog timing defect that is fixed
-in Beta 1.0 — the first ping now happens as soon as the store answers, instead of
-after a full interval. See `../CHANGELOG.md`. If you still see a timeout, the
-journal lines immediately before it are the useful evidence.
+Beta 1.0 shipped a partial fix for this. Two further causes were found
+afterwards and fixed (see `../CHANGELOG.md`): the daily backup and integrity
+check held the database lock the watchdog needs, and `Type=simple` counted slow
+cold starts against the watchdog. A leftover `backups/shield-*.db.tmp` file next
+to a timeout is the signature of the first cause.
+
+If the agent reached `failed` after repeated timeouts:
+
+```bash
+sudo systemctl reset-failed shield-agent
+sudo systemctl start shield-agent
+```
+
+If you still see a timeout on a current build, the journal lines immediately
+before it are the useful evidence.
+
+## Desktop notifications do not appear
+
+Notifications are shown by `shield-notify`, a systemd *user* service, not by the
+root agent. Check it in your own session (no `sudo`):
+
+```bash
+systemctl --user status shield-notify
+systemctl --user enable --now shield-notify
+id -nG | grep -w shield    # your user must be in the shield group
+```
+
+The agent logs `Không có phiên desktop nào đang chạy shield-notify` when a
+critical alert had no session to go to.
 
 ## The database is growing
 

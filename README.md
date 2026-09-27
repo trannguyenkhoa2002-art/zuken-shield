@@ -18,7 +18,9 @@ completed long-duration soak testing. Treat it as software you evaluate in a lab
 you own, not as a product you place in front of something valuable.
 
 Product release: **Beta 1.0**
-Internal package version: **3.0.0a2** (this is what `dpkg` and `pip` report)
+Internal package version: **3.0.0a3** (this is what `dpkg` and `pip` report).
+Beta 1.0 was published under the previous alpha number; this version adds the
+post-release fixes listed under *Unreleased* in `CHANGELOG.md`.
 
 The two numbers are deliberately not merged; see `docs/RELEASE_NOTES_BETA_1.0.md`.
 
@@ -34,7 +36,7 @@ against detection rules, and preserves the evidence behind every conclusion.
   listening-socket inventory, USB device events, and journal/auditd ingestion.
 - **Network telemetry** — ARP and neighbour observation, DNS resolver watching,
   connection and flow aggregation, device discovery, and traffic statistics.
-- **Detection** — 58 rule identifiers across authentication, reconnaissance,
+- **Detection** — rules across authentication, reconnaissance,
   malware-execution behaviour chains, network tampering (ARP/DNS/DHCP/ICMP),
   device inventory, file and configuration tampering, risky service exposure,
   and Shield's own integrity.
@@ -42,19 +44,19 @@ against detection rules, and preserves the evidence behind every conclusion.
   multi-step chains such as reconnaissance followed by an SSH attack.
 - **Evidence graph** — 12 entity types and 11 relations, with the rule that no
   edge may exist without a valid evidence reference.
-- **Deterministic incident reports** — ten fixed sections built only from
-  measured data, with an explicit epistemic state (confirmed fact, supported
-  hypothesis, unconfirmed, insufficient evidence). The report template reserves
-  two optional prose slots for a future model; they are unused in Beta 1.0.
+- **Deterministic incident reports** — eleven fixed sections: nine built only
+  from measured data, with an explicit epistemic state (confirmed fact,
+  supported hypothesis, unconfirmed, insufficient evidence), plus two optional
+  prose slots reserved for a future model; those two are unused in Beta 1.0.
 - **Guided incident Q&A** — five closed questions about an incident, answered
-  deterministically from the report in roughly a millisecond.
+  deterministically from the report, without loading any model.
 - **Expert Evidence** — a read-only, bounded, audited query surface over the
   event store for examining what actually happened.
 - **Response workflow** — six action types behind a policy engine, with
   preconditions, verification against observable system state, and rollback.
 - **Self-monitoring** — a guardian service, a systemd watchdog, a forensic
-  ledger, bounded database maintenance, and alerts when Shield's own collectors
-  go quiet.
+  ledger, bounded database maintenance, alerts when Shield's own collectors go
+  quiet, and a desktop warning from `shield-notify` when the agent itself stops.
 
 ## What Shield does not do
 
@@ -185,8 +187,11 @@ walkthroughs from telemetry to incident report.
 ## Security model
 
 - The **agent** runs as root for kernel telemetry and other privileged host
-  observations. It is confined by systemd (`MemoryMax=1G`, restricted
-  capabilities), and it imports no packet-capture library.
+  observations. Its systemd unit sets `MemoryMax=1G`, `TasksMax=512`,
+  `NoNewPrivileges`, `ProtectSystem=full`, `RestrictSUIDSGID` and an
+  address-family allowlist. It does **not** drop root capabilities — no
+  `CapabilityBoundingSet` is applied to the agent today. It imports no
+  packet-capture library.
 - **Packet capture is optional and lives outside the agent.** It runs in the
   separate `shield-packet-collector` service, with a restricted capability set
   (`CAP_NET_RAW` and `CAP_NET_ADMIN` only), and feeds the core newline-delimited
@@ -201,6 +206,10 @@ walkthroughs from telemetry to incident report.
 - **Evidence storage stays local.** The database, PCAPs, and snapshots live in
   `/var/lib/shield/`. Optional, explicitly configured Telegram notifications
   transmit redacted alert text, not these files.
+- **Desktop notifications never cross a privilege boundary.** The root agent
+  publishes redacted notification text on its IPC socket; `shield-notify`, a
+  systemd *user* service in your desktop session, shows it with your own
+  privileges and warns you if the agent is unreachable for two minutes.
 - **Response actions** are levelled, reversible where possible, verified against
   observable state, and rolled back on failure.
 - **Secrets are redacted** before anything is stored or displayed.
@@ -223,10 +232,13 @@ More: `docs/SECURITY_MODEL.md` and `docs/PRIVACY.md`.
 - The interface is Vietnamese and English only.
 - Response actions beyond `block_ip` have had limited real-world exercise.
 - Some scenarios are deterministic-report-only by design.
-- A startup watchdog timing defect was identified during Beta 1.0 testing and
-  fixed. The fix was verified across repeated service starts and a real cold
-  boot with zero watchdog timeouts. That is evidence, not long-duration soak
-  testing; see `docs/RELEASE_NOTES_BETA_1.0.md`.
+- **Watchdog stability is not yet proven.** The Beta 1.0 startup fix did not
+  hold: the developer's journal records 41 watchdog timeouts between the release
+  and 2026-09-27, and on 2026-09-27 the agent stopped after five in a row. Two
+  causes were found and fixed after Beta 1.0 (see `CHANGELOG.md`, Unreleased):
+  the daily backup and integrity check held the lock the watchdog needs, and
+  slow cold starts counted against the watchdog. Those fixes are covered by
+  tests but have **not** yet been observed over a soak period.
 
 ## Roadmap
 

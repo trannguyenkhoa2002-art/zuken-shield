@@ -58,7 +58,7 @@ Within a short time a `FILE_INTEGRITY_CHANGED` alert should appear.
 
 ## 5. Read an incident report
 
-Open **Operations → Incidents** and select one. The report has ten sections built only from
+Open **Operations → Incidents** and select one. The report has eleven sections — nine built only from
 measured data: what type of incident, how severe, when, which asset, what was
 observed, which facts are established, which evidence supports it, which
 detections contributed, what to inspect next, and what the report cannot
