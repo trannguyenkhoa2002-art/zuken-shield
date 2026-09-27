@@ -75,6 +75,7 @@ from shield.common import sdnotify
 from shield.common.models import Alert, Event, now
 from shield.security import PolicyEngine, RiskScorer
 from shield.security.policy import PolicyConfig
+from shield.security import gray_zone
 from shield.security.scoring import RiskContext
 from shield.security import trust
 from shield.security.correlation import CorrelationEngine, CorrelationRule
@@ -320,6 +321,8 @@ async def run_alert_consumer(alert_bus: Bus, store: Store, ipc: IpcServer,
     correlations = CorrelationEngine(
         CorrelationRule.load_all(correlation_path, correlation_key)
     )
+    gray_store = gray_zone.GrayZoneStore(store.conn)
+    gray_thresholds = gray_zone.GrayThresholds.from_env()
     while True:
         alert: Alert = await q.get()
         alert = enrich_alert(alert)
@@ -360,9 +363,22 @@ async def run_alert_consumer(alert_bus: Bus, store: Store, ipc: IpcServer,
             policy_action="suppressed" if suppression else decision.action,
         )
         is_assessment = bool(alert.evidence.get("assessment_id"))
+        if gray_zone.is_candidate_only(alert) and not is_assessment:
+            # Near-miss của detector: vào vùng xám cho người phân tích thấy,
+            # nhưng KHÔNG thành alert, không thông báo, không correlation.
+            kind, reason = gray_zone.classify(
+                alert, suppressed_reason=None, thresholds=gray_thresholds) or ("below_threshold", "")
+            entry = await asyncio.to_thread(gray_store.record, alert, kind, reason)
+            await ipc.broadcast("gray_zone_updated", {"entry": entry})
+            continue
         # Assessment vẫn ép 0: event tổng hợp phải hiện đủ, không gộp.
-        store.insert_alert(
+        stored = store.insert_alert(
             alert, dedupe_window_s=0 if is_assessment else (alert.dedupe_window_s or 300))
+        gray = None if is_assessment else gray_zone.classify(
+            stored, suppressed_reason=suppression, thresholds=gray_thresholds)
+        if gray is not None:
+            entry = await asyncio.to_thread(gray_store.record, stored, *gray)
+            await ipc.broadcast("gray_zone_updated", {"entry": entry})
         if trust.may_enter_forensic_ledger(alert):
             store.add_forensic_record("alert", alert.to_dict())
         store.add_audit_log(
@@ -2541,6 +2557,52 @@ async def handle_command(
                             f"{last.get('rows', 0)} dòng trong {last.get('elapsed_s', 0):.3f}s")
         payload["request_id"] = msg.get("request_id")
         await ipc.send_to(client_id, cmd + "_result", payload)
+
+    elif cmd == "gray_zone_list":
+        wanted = msg.get("state", "open")
+        wanted = wanted if wanted in ("open", "promoted", "dismissed", None) else "open"
+        entries = await asyncio.to_thread(
+            gray_zone.GrayZoneStore(store.conn).entries, wanted, int(msg.get("limit", 200) or 200))
+        await ipc.send_to(client_id, "gray_zone_list", {"request_id": request_id, "entries": entries})
+
+    elif cmd == "gray_zone_decide":
+        # Quyết định của NGƯỜI qua giao diện: principal lấy từ SO_PEERCRED của
+        # kết nối IPC, không từ nội dung lệnh. Không có đường nào khác tới đây.
+        gray_store = gray_zone.GrayZoneStore(store.conn)
+        entry_id = str(msg.get("entry_id", ""))
+        decision = str(msg.get("decision", ""))
+        note = str(msg.get("note", ""))
+        try:
+            entry = gray_store.get(entry_id)
+            if entry is None:
+                raise ValueError("gray-zone entry not found")
+            incident_id = ""
+            if decision == "promote" and entry["state"] == "open":
+                incident = store.open_or_update_incident(
+                    correlation_id=f"ANALYST_PROMOTED:{entry['rule_id']}",
+                    subject=entry["subject"], title=entry["title"],
+                    severity="warning", risk_score=int(entry["risk_score"]),
+                    evidence_strength=max(0, int(entry["evidence_confidence"])) / 100,
+                    reason={
+                        "reason_kind": "analyst_promoted", "rule_id": entry["rule_id"],
+                        "subject": entry["subject"], "observed_count": int(entry["count"]),
+                        "first_contributing_ts": float(entry["first_seen"]),
+                        "last_contributing_ts": float(entry["last_seen"]),
+                    },
+                    asset_refs=store.entity_ids_for_key(entry["subject"]),
+                )
+                incident_id = str(incident["incident_id"])
+            decided = gray_store.decide(entry_id, decision, principal=principal, note=note,
+                                        incident_id=incident_id)
+        except ValueError as exc:
+            await ipc.send_to(client_id, "command_error", {"cmd": cmd, "error": str(exc)})
+            return
+        store.add_audit_log("gray_zone_decide",
+                            {"entry_id": entry_id, "decision": decision, "principal": principal,
+                             "note": note[:200], "incident_id": incident_id}, decided["state"])
+        await ipc.broadcast("gray_zone_updated", {"entry": decided})
+        if incident_id:
+            await ipc.broadcast("incidents_updated", {"incidents": store.list_incidents(limit=100)})
 
     elif cmd == "incident_set_state":
         # Đóng/mở lại một sự việc từ UI (mục B5). Trước đây store có hàm này

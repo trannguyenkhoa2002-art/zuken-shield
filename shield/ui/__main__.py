@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QInputDialog,
     QDialog,
     QFileDialog,
     QFrame,
@@ -67,6 +68,8 @@ from shield.ui.evidence_view import (
     evidence_detail_rows,
 )
 from shield.ui.incident_view import correlation_reason_rows
+from shield.ui import gray_zone_view
+from shield.security.gray_zone import GrayZoneStore
 from shield.ai import chat_router
 from shield.ui import chat_view, report_view
 
@@ -1707,6 +1710,95 @@ class TrafficTab(QWidget, I18nMixin):
         self._refresh_label()
         if self._curve is not None:
             self._curve.setData(list(self._data))
+
+
+class GrayZoneTab(QWidget, I18nMixin):
+    """Đáng nghi nhưng chưa đủ bằng chứng — xem security/gray_zone.py.
+
+    Tab này chỉ HIỆN và chuyển quyết định của người dùng tới agent. Nó không
+    tự nâng hay bỏ mục nào; agent ghi principal (uid/pid) và audit.
+    """
+
+    STATES = ("open", "promoted", "dismissed")
+
+    def __init__(self, store: Store, client: SocketClient) -> None:
+        super().__init__()
+        self._init_i18n()
+        self.store = store
+        self.client = client
+        self._entries: list[dict] = []
+        layout = QVBoxLayout(self)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.bind(lambda: self.hint.setText(t("gray.hint")))
+        layout.addWidget(self.hint)
+        controls = row_layout()
+        self.state_combo = QComboBox()
+        for state in self.STATES:
+            self.state_combo.addItem(state, state)
+        self.state_combo.currentIndexChanged.connect(lambda _i: self.refresh())
+        controls.addWidget(self.state_combo)
+        self.promote_btn = QPushButton()
+        self.bind(lambda: self.promote_btn.setText(t("gray.promote")))
+        self.promote_btn.clicked.connect(lambda: self._decide("promote"))
+        controls.addWidget(self.promote_btn)
+        self.dismiss_btn = QPushButton()
+        self.bind(lambda: self.dismiss_btn.setText(t("gray.dismiss")))
+        self.dismiss_btn.clicked.connect(lambda: self._decide("dismiss"))
+        controls.addWidget(self.dismiss_btn)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.table = QTableWidget(0, len(gray_zone_view.COLUMNS))
+        self.bind(lambda: self.table.setHorizontalHeaderLabels(gray_zone_view.headers(current_lang())))
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
+        self.bind(self._render)
+        self.load_from_store()
+
+    def load_from_store(self) -> None:
+        try:
+            self.on_entries(GrayZoneStore(self.store.conn).entries(self._state()))
+        except Exception:  # noqa: BLE001 — DB cũ chưa có bảng: agent sẽ migrate
+            self.on_entries([])
+
+    def _state(self) -> str:
+        return str(self.state_combo.currentData() or "open")
+
+    def refresh(self) -> None:
+        if not self.client.send_command({"cmd": "gray_zone_list", "state": self._state()}):
+            self.load_from_store()
+
+    def on_entries(self, entries: list[dict]) -> None:
+        self._entries = list(entries)
+        self._render()
+
+    def on_updated(self, _entry: dict) -> None:
+        self.refresh()
+
+    def _render(self) -> None:
+        self.table.setRowCount(0)
+        for entry in self._entries:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            for col, value in enumerate(gray_zone_view.row_values(entry, current_lang())):
+                item = QTableWidgetItem(value)
+                if col == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, entry.get("entry_id"))
+                self.table.setItem(row, col, item)
+
+    def _decide(self, decision: str) -> None:
+        items = self.table.selectedItems()
+        first = self.table.item(items[0].row(), 0) if items else None
+        if first is None:
+            QMessageBox.information(self, t("gray.title"), t("gray.select_first"))
+            return
+        note, ok = QInputDialog.getText(self, t("gray.title"), t("gray.note_prompt"))
+        if not ok:
+            return
+        self.client.send_command({"cmd": "gray_zone_decide", "decision": decision,
+                                  "entry_id": first.data(Qt.ItemDataRole.UserRole), "note": note})
 
 
 class LogTab(QWidget, I18nMixin):
@@ -4885,6 +4977,7 @@ class MainWindow(QMainWindow):
         self.devices_tab = DevicesTab(self.store, self.client)
         self.alerts_tab = AlertsTab(self.client)
         self.alerts_tab.load_from_store(self.store)
+        self.gray_zone_tab = GrayZoneTab(self.store, self.client)
         self.traffic_tab = TrafficTab(self.store, self.client)
         self.audit_tab = SelfAuditTab(self.store, self.client)
         self.advanced_tab = AdvancedSecurityTab(self.client, self.store)
@@ -4903,6 +4996,7 @@ class MainWindow(QMainWindow):
             (self.overview_tab, "nav.overview"),
             (self.incidents_tab, "nav.incidents"),
             (self.alerts_tab, "nav.alerts"),
+            (self.gray_zone_tab, "nav.gray_zone"),
             (self.devices_tab, "nav.devices"),
             (self.traffic_tab, "nav.traffic"),
             (self.log_tab, "nav.log"),
@@ -4922,6 +5016,7 @@ class MainWindow(QMainWindow):
                 (self.overview_tab, "nav.overview"),
                 (self.incidents_tab, "nav.incidents"),
                 (self.alerts_tab, "nav.alerts"),
+                (self.gray_zone_tab, "nav.gray_zone"),
             ]),
             ("section.monitoring", "header.monitoring_desc", [
                 (self.devices_tab, "nav.devices"),
@@ -5234,6 +5329,10 @@ class MainWindow(QMainWindow):
             self.status.showMessage(t("status.connected_health", active=active, total=len(components)))
         elif msg_type == "runtime_health":
             self.advanced_tab.on_status(msg["data"])
+        elif msg_type == "gray_zone_list":
+            self.gray_zone_tab.on_entries((msg.get("data") or {}).get("entries", []))
+        elif msg_type == "gray_zone_updated":
+            self.gray_zone_tab.on_updated((msg.get("data") or {}).get("entry", {}))
         elif msg_type == "incidents_updated":
             incidents = (msg.get("data") or {}).get("incidents", [])
             self.incidents_tab.on_incidents(incidents)

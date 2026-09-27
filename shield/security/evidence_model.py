@@ -225,3 +225,11 @@ def describe(alert: dict, lang: str = "en") -> str:
     lines.append(f"{_TEXT['observed'][lang]}: {names(assessment.get('observed'))}")
     lines.append(f"{_TEXT['missing'][lang]}: {names(assessment.get('missing'))}")
     return "\n".join(lines)
+
+
+def fact_label(rule_id: str, fact: str, lang: str = "en") -> str:
+    """Nhãn người đọc của một fact trong mô hình của rule; fact lạ trả lại id."""
+    for item in EVIDENCE_MODELS.get(rule_id, ()):
+        if item.fact == fact:
+            return item.label_vi if lang == "vi" else item.label_en
+    return fact

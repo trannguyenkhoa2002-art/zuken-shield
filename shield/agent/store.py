@@ -32,6 +32,7 @@ from shield.ai.enrichment import ENRICHMENT_SCHEMA
 from shield.decision.calibration import CALIBRATION_INDEXES, CALIBRATION_SCHEMA
 from shield.evidence.graph import GRAPH_INDEXES, GRAPH_SCHEMA, EvidenceGraph
 from shield.response.jobs import RESPONSE_INDEXES, RESPONSE_SCHEMA
+from shield.security.gray_zone import GRAY_INDEXES, GRAY_SCHEMA, GrayZoneStore
 from shield.security.knowledge import KNOWLEDGE_INDEXES, KNOWLEDGE_SCHEMA
 
 logger = logging.getLogger("shield.store")
@@ -411,7 +412,7 @@ CREATE TABLE IF NOT EXISTS system_health (
     detail TEXT NOT NULL,
     updated_ts REAL NOT NULL
 );
-""" + GRAPH_SCHEMA + CALIBRATION_SCHEMA + RESPONSE_SCHEMA + AI_AUDIT_SCHEMA + KNOWLEDGE_SCHEMA + ENRICHMENT_SCHEMA + CHAT_SCHEMA
+""" + GRAPH_SCHEMA + CALIBRATION_SCHEMA + RESPONSE_SCHEMA + AI_AUDIT_SCHEMA + KNOWLEDGE_SCHEMA + ENRICHMENT_SCHEMA + CHAT_SCHEMA + GRAY_SCHEMA
 
 # Index tách khỏi SCHEMA có chủ ý: chúng tham chiếu cột mà một database cũ
 # chưa có (v3 không có events.origin). CREATE TABLE IF NOT EXISTS là no-op
@@ -450,7 +451,7 @@ CREATE INDEX IF NOT EXISTS idx_events_ingested ON events(ts_ingested);
 --     source=endpoint  (   58.717 dòng)     1,63 ms  ->  0,27 ms
 -- Chi phí: dựng 0,9 giây, +47 MB.
 CREATE INDEX IF NOT EXISTS idx_events_source_ts ON events(source, ts);
-""" + GRAPH_INDEXES + CALIBRATION_INDEXES + RESPONSE_INDEXES + AI_AUDIT_INDEXES + KNOWLEDGE_INDEXES
+""" + GRAPH_INDEXES + CALIBRATION_INDEXES + RESPONSE_INDEXES + AI_AUDIT_INDEXES + KNOWLEDGE_INDEXES + GRAY_INDEXES
 
 
 def _describe_path(path: Path) -> str:
@@ -2338,6 +2339,8 @@ class Store:
 
         with self.conn:
             ai_pruned = InvestigationAudit(self.conn).prune()
+        # Vùng xám: chỉ mục ĐÃ QUYẾT ĐỊNH quá hạn alert mới bị xoá.
+        GrayZoneStore(self.conn).prune(now_ts - alert_days * 86400)
         # CÒN VIỆC KHÔNG. Mỗi lượt bị chặn trần, nên "đã chạy xong một lượt"
         # không còn đồng nghĩa với "đã dọn xong". Vòng bảo trì đọc cờ này để
         # quay lại sớm thay vì ngủ tiếp sáu tiếng trong lúc database vẫn ở trên
@@ -2945,7 +2948,9 @@ class Store:
                 "INSERT OR IGNORE INTO incident_refs(incident_id,ref_kind,ref_id,ts) "
                 "VALUES(?,?,?,?)", (incident_id, kind, ref, ts))
 
-    _REASON_KINDS = {"rule_combination", "threshold_count"}
+    # 'analyst_promoted': một người đã nâng mục vùng xám lên incident. Không
+    # rule nào "tạo" ra nó; `rule_id` là rule của tín hiệu gốc.
+    _REASON_KINDS = {"rule_combination", "threshold_count", "analyst_promoted"}
 
     def _record_correlation_reason(self, incident_id: str, reason: dict, ts: float) -> None:
         """Ghi MỘT lý do gộp. Mọi trường đều là đầu vào luật hoặc số đo được.

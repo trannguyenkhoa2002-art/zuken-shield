@@ -33,6 +33,20 @@ STRINGS: dict[str, tuple[str, str]] = {
     "severity.critical": ("Nguy cấp", "Critical"),
     "alerts.col_risk": ("Điểm rủi ro", "Risk score"),
     "alerts.col_confidence": ("Độ tin cậy bằng chứng", "Evidence confidence"),
+    "nav.gray_zone": ("Vùng xám", "Gray zone"),
+    "gray.title": ("Vùng xám", "Gray zone"),
+    "gray.hint": (
+        "Tín hiệu đáng nghi nhưng CHƯA đủ bằng chứng: chưa tới ngưỡng, thiếu bằng chứng, "
+        "hoặc đã bị tắt tiếng. Shield không tự quyết định các mục này — bạn nâng lên "
+        "sự việc hoặc bỏ qua kèm ghi chú.",
+        "Suspicious signals WITHOUT enough evidence yet: below threshold, low evidence "
+        "confidence, or suppressed by policy. Shield never decides these on its own — "
+        "promote one to an incident or dismiss it with a note.",
+    ),
+    "gray.promote": ("Nâng lên sự việc", "Promote to incident"),
+    "gray.dismiss": ("Bỏ qua", "Dismiss"),
+    "gray.select_first": ("Chọn một mục trước.", "Select an entry first."),
+    "gray.note_prompt": ("Ghi chú cho quyết định này:", "Note for this decision:"),
     "status.ok": ("Bình thường", "Normal"),
     "status.watching": ("Đang theo dõi", "Watching"),
     "status.alert": ("Có cảnh báo", "Alert active"),
@@ -2190,6 +2204,9 @@ STRINGS: dict[str, tuple[str, str]] = {
     ),
     "incidents.reason.kind.threshold_count": (
         "Vượt ngưỡng số lần", "Threshold exceeded",
+    ),
+    "incidents.reason.kind.analyst_promoted": (
+        "Người phân tích nâng từ vùng xám", "Promoted from the gray zone by an analyst",
     ),
     "incidents.reason.seconds": ("{value} giây", "{value} s"),
     "incidents.reason.none": (

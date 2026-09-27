@@ -16,6 +16,9 @@ from shield.common.models import Alert, Event, now
 
 SSH_BRUTEFORCE_THRESHOLD = 5
 SSH_BRUTEFORCE_WINDOW_S = 300.0
+# Vùng xám: đủ nửa ngưỡng thì báo MỘT lần là "gần đủ", thay vì im lặng tới khi
+# chạm ngưỡng (hoặc không bao giờ). Không thành alert — xem security/gray_zone.
+SSH_NEAR_MISS = (SSH_BRUTEFORCE_THRESHOLD + 1) // 2
 
 # _ssh_fails chỉ lọc theo cửa sổ thời gian khi CHÍNH src_ip đó có lần fail
 # mới — IP ngừng dò để lại key rỗng nằm mãi trong dict, rò rỉ bộ nhớ chậm.
@@ -63,7 +66,21 @@ class LocalLogDetector:
         fails[:] = [t for t in fails if now_ts - t <= SSH_BRUTEFORCE_WINDOW_S]
         fails.append(now_ts)
         if len(fails) < SSH_BRUTEFORCE_THRESHOLD:
-            return []
+            if len(fails) != SSH_NEAR_MISS:
+                return []
+            return [Alert(
+                ts=now_ts, rule_id="LOCAL_SSH_BRUTEFORCE", severity="info",
+                title=f"SSH sai mật khẩu lặp lại từ {src_ip} (chưa tới ngưỡng)",
+                detail=f"{len(fails)}/{SSH_BRUTEFORCE_THRESHOLD} lần sai trong cửa sổ.",
+                subject=src_ip,
+                evidence={
+                    "src_ip": src_ip, "fail_count": len(fails),
+                    "window_min": int(SSH_BRUTEFORCE_WINDOW_S / 60),
+                    "gray_zone": {"reason": f"{len(fails)} failed logins, threshold is "
+                                            f"{SSH_BRUTEFORCE_THRESHOLD}",
+                                  "observed": len(fails), "threshold": SSH_BRUTEFORCE_THRESHOLD},
+                },
+            )]
 
         return [
             Alert(

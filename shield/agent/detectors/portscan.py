@@ -107,7 +107,22 @@ class PortscanDetector:
 
         distinct_ports = {p for p, _ in events}
         if len(distinct_ports) <= self.port_threshold:
-            return []
+            # Vùng xám: chạm nửa ngưỡng thì báo MỘT lần là "gần đủ".
+            near_miss = (self.port_threshold + 1) // 2
+            if len(distinct_ports) != near_miss:
+                return []
+            return [Alert(
+                ts=now_ts, rule_id="SCAN_PORTSCAN", severity="info",
+                title=f"{src_ip} dò {len(distinct_ports)} cổng (chưa tới ngưỡng)",
+                detail=f"{len(distinct_ports)}/{self.port_threshold} cổng trong {self.window_s:.0f}s.",
+                subject=src_ip,
+                evidence={
+                    "src_ip": src_ip, "ports": sorted(distinct_ports), "window_s": int(self.window_s),
+                    "gray_zone": {"reason": f"{len(distinct_ports)} distinct ports, threshold is "
+                                            f"{self.port_threshold}",
+                                  "observed": len(distinct_ports), "threshold": self.port_threshold},
+                },
+            )]
 
         acked = set(self._acked_ports.get(src_ip, {}))
         is_connect_scan = bool(acked & distinct_ports)
