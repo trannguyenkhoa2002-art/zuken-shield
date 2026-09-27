@@ -193,7 +193,7 @@ class ToolRequest:
                 raise SchemaViolation(f"đối số {key!r} phải là giá trị đơn")
         return cls(
             tool=_text(raw.get("tool", ""), limit=64, field_name="tool"),
-            arguments={k: v for k, v in arguments.items()},
+            arguments=dict(arguments.items()),
             intent=_text(raw.get("intent", ""), limit=64, field_name="intent"),
         )
 

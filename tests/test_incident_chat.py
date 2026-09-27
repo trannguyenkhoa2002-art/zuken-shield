@@ -8,9 +8,7 @@ Thứ duy nhất mới là một câu hỏi.
 from __future__ import annotations
 
 import asyncio
-import json
 import pathlib
-from pathlib import Path
 
 import pytest
 
@@ -18,7 +16,7 @@ from shield.agent.store import Store
 from shield.ai import enrichment as E
 from shield.ai.chat import (MAX_PENDING_PER_SESSION, MAX_QUESTION_CHARS,
                             MAX_SESSION_MESSAGES, ChatStore)
-from shield.ai.chat_scope import ACTION_REQUEST, IN_SCOPE, OUT_OF_SCOPE, classify
+from shield.ai.chat_scope import ACTION_REQUEST, IN_SCOPE, classify
 from shield.ai.enrichment import EnrichmentStore
 from shield.ai.enrichment_runner import Queue, SharedAiRunner
 from shield.common.models import Alert

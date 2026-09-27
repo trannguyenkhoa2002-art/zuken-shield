@@ -16,11 +16,10 @@ import asyncio
 import contextlib
 import logging
 import os
-import pwd
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
+from collections.abc import Awaitable, Callable
 
 from shield.common.models import Alert
 from shield.common.secrets import redact_text
@@ -31,63 +30,58 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 NOTIFY_TIMEOUT_S = 5.0
 
 
-def desktop_session_uids() -> list[int]:
-    """UID của các phiên desktop đang mở trên máy này.
+# Kênh thông báo desktop khi agent chạy bằng root (systemd).
+#
+# Trước đây agent tự đổi sang UID của người dùng (`setpriv --reuid`) rồi gọi
+# notify-send trên D-Bus của phiên đó. Dưới hardening của unit (seccomp của
+# RestrictSUIDSGID/ProtectKernelLogs, NoNewPrivileges) lời gọi setresuid bị
+# chặn: journal ghi `setpriv: setresuid failed: Operation not permitted` ở MỌI
+# lần gửi từ 11/09 tới 25/09/2026, tức không một thông báo desktop nào tới
+# được người dùng — kể cả lúc agent chết. Nới hardening để ép nó chạy là đổi
+# an toàn lấy tiện lợi.
+#
+# Giờ không có chuyển quyền nào: agent phát thông báo (đã che bí mật) qua IPC,
+# và `shield-notify` — một systemd user service chạy SẴN trong phiên người
+# dùng — nhận rồi gọi notify-send bằng chính quyền của người đó. Xem
+# shield/notify_bridge.py.
+_desktop_relay: Callable[[dict], Awaitable[int]] | None = None
 
-    Agent chạy bằng ROOT dưới systemd, mà `notify-send` gửi thông báo qua
-    D-Bus của PHIÊN NGƯỜI DÙNG — chạy thẳng bằng root thì thông báo không
-    tới đâu cả (không lỗi, chỉ im lặng biến mất). Đây là lý do thông báo
-    desktop trước đây không bao giờ hiện dù log ghi là đã gửi.
 
-    Cách nhận biết phiên đang mở: thư mục `/run/user/<uid>` có socket `bus`
-    — systemd tạo cái này cho mỗi phiên đăng nhập có D-Bus, và xoá khi đăng
-    xuất, nên không cần gọi thêm `loginctl`.
+def set_desktop_relay(relay: Callable[[dict], Awaitable[int]] | None) -> None:
+    """Agent đăng ký hàm phát thông báo qua IPC; trả về số phiên đã nhận."""
+    global _desktop_relay
+    _desktop_relay = relay
+
+
+def desktop_payload(alert: Alert) -> dict:
+    """Nội dung thông báo desktop, ĐÃ CHE bí mật trước khi rời agent."""
+    return {
+        "title": f"Shield: {redact_text(alert.title)}",
+        "body": redact_text(alert.detail),
+        "severity": alert.severity,
+        "rule_id": alert.rule_id,
+    }
+
+
+async def run_notify_send(title: str, body: str, *, urgency: str = "critical") -> bool:
+    """Chạy notify-send bằng chính user hiện tại, có hạn thời gian.
+
+    Dùng ở hai chỗ: agent chạy không phải root (chế độ dev) và
+    `shield-notify` trong phiên người dùng.
     """
-    uids: list[int] = []
-    run_user = Path("/run/user")
-    if not run_user.is_dir():
-        return uids
-    try:
-        for entry in run_user.iterdir():
-            if not entry.name.isdigit():
-                continue
-            if (entry / "bus").exists():
-                uids.append(int(entry.name))
-    except OSError as e:
-        logger.debug("Không liệt kê được /run/user: %s", e)
-    return uids
-
-
-async def _notify_send_as(uid: int | None, alert: Alert) -> bool:
-    """Chạy notify-send. `uid=None` nghĩa là chạy bằng chính user hiện tại
-    (chế độ dev, agent không chạy bằng root)."""
-    args = ["/usr/bin/notify-send", "-u", "critical",
-            f"Shield: {redact_text(alert.title)}", redact_text(alert.detail)]
-    env = dict(os.environ)
-    if uid is not None:
-        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{uid}/bus"
-        env["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
-        # setpriv có sẵn trong util-linux (mọi bản Debian/Ubuntu/Kali), không
-        # cần sudo và không đọc file cấu hình nào — phù hợp chạy từ daemon.
-        try:
-            gid = pwd.getpwuid(uid).pw_gid
-        except KeyError:
-            logger.warning("Không tìm thấy tài khoản desktop uid=%s", uid)
-            return False
-        args = ["/usr/bin/setpriv", "--reuid", str(uid), "--regid", str(gid), "--init-groups", *args]
+    args = ["/usr/bin/notify-send", "-u", urgency, redact_text(title), redact_text(body)]
     proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *args,
-            env=env,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await asyncio.wait_for(proc.communicate(), NOTIFY_TIMEOUT_S)
         if proc.returncode != 0:
             logger.warning(
-                "notify-send (uid=%s) trả về %s: %s",
-                uid, proc.returncode, redact_text(stderr.decode(errors="replace").strip())[:500],
+                "notify-send trả về %s: %s",
+                proc.returncode, redact_text(stderr.decode(errors="replace").strip())[:500],
             )
             return False
         return True
@@ -95,10 +89,10 @@ async def _notify_send_as(uid: int | None, alert: Alert) -> bool:
         logger.warning("Thiếu lệnh để gửi thông báo desktop: %s", e.filename)
         return False
     except TimeoutError:
-        logger.warning("notify-send (uid=%s) quá hạn %.1fs; kiểm tra D-Bus của phiên desktop", uid, NOTIFY_TIMEOUT_S)
+        logger.warning("notify-send quá hạn %.1fs; kiểm tra D-Bus của phiên desktop", NOTIFY_TIMEOUT_S)
         return False
     except Exception as exc:
-        logger.warning("Lỗi gửi notify-send (uid=%s): %s", uid, type(exc).__name__)
+        logger.warning("Lỗi gửi notify-send: %s", type(exc).__name__)
         return False
     finally:
         # Includes caller cancellation: never leave a blocked sender behind.
@@ -109,22 +103,28 @@ async def _notify_send_as(uid: int | None, alert: Alert) -> bool:
                 await asyncio.wait_for(proc.wait(), 1.0)
 
 
+async def notify_desktop_as_user(alert: Alert) -> bool:
+    """Hiện thông báo cho một alert bằng quyền của tiến trình hiện tại."""
+    payload = desktop_payload(alert)
+    return await run_notify_send(payload["title"], payload["body"])
+
+
 async def notify_desktop(alert: Alert) -> None:
     if os.geteuid() != 0:
-        await _notify_send_as(None, alert)
+        await notify_desktop_as_user(alert)
         return
-
-    uids = desktop_session_uids()
-    if not uids:
-        logger.debug("Không thấy phiên desktop nào đang mở — bỏ qua thông báo desktop.")
+    payload = desktop_payload(alert)
+    if _desktop_relay is None:
+        logger.warning("Chưa có kênh thông báo desktop — bỏ qua thông báo %s.", alert.rule_id)
         return
-    # Gửi cho mọi phiên đang mở: máy có thể có nhiều user đăng nhập cùng lúc
-    # (fast user switching), không đoán được ai đang ngồi trước máy.
-    results = await asyncio.gather(*(_notify_send_as(uid, alert) for uid in uids))
-    if not any(results):
+    delivered = await _desktop_relay(payload)
+    if not delivered:
+        # Nói thẳng lý do và cách sửa: im lặng ở đây chính là lỗi cũ.
         logger.warning(
-            "Không gửi được thông báo desktop tới phiên nào (%s) — xem lỗi notify-send phía trên.",
-            uids,
+            "Không có phiên desktop nào đang chạy shield-notify — thông báo %s không tới "
+            "được người dùng. Bật bằng: systemctl --user enable --now shield-notify.service "
+            "(user phải thuộc nhóm shield).",
+            alert.rule_id,
         )
 
 

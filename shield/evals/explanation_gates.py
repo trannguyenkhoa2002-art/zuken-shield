@@ -43,7 +43,7 @@ MIN_USEFUL_RATE = 0.50
 
 def check(gates: dict, measured: dict) -> dict:
     """Từng cổng -> True/False/None. `None` = CHƯA ĐO, và không bao giờ là đạt."""
-    results = {}
+    results: dict = {}
     for name, threshold in gates.items():
         value = measured.get(name)
         if value is None:

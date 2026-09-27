@@ -493,8 +493,9 @@ def _report(store, support: ProbeSupport, running: bool, detail: str,
         available = running and kind in support.supported
         if available:
             text = support.supported.get(kind, "")
-            if (dropped or {}).get(kind):
-                text += f" — đã bỏ {dropped[kind]} event do giới hạn tốc độ"
+            dropped_count = (dropped or {}).get(kind)
+            if dropped_count:
+                text += f" — đã bỏ {dropped_count} event do giới hạn tốc độ"
         else:
             text = support.unsupported.get(kind, detail or "chưa gắn được probe")
         # Số bỏ KHÔNG đổi `available`: chạm trần trong một chớp lưu lượng không
@@ -566,6 +567,7 @@ async def ebpf_exec_loop(event_bus, store=None) -> None:
 
     limiter = RateLimiter(RATE_LIMIT_PER_S)
     last_drop_report = time.monotonic()
+    assert process.stdout is not None and process.stderr is not None  # cả hai là PIPE
     try:
         while True:
             line = await process.stdout.readline()

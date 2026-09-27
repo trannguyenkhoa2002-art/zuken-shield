@@ -16,13 +16,12 @@ import json
 import pytest
 
 from shield.ai.contracts import (
-    Hypothesis,
     InvestigationRequest,
     InvestigationResult,
     SchemaViolation,
     ToolRequest,
 )
-from shield.ai.coordinator import MAX_ROUNDS, Coordinator, ScopeViolation
+from shield.ai.coordinator import MAX_ROUNDS, Coordinator
 from shield.ai.orchestrator import READ_ONLY_TOOLS, InvestigationOrchestrator
 
 
@@ -47,8 +46,8 @@ class _Queries:
 
 
 def _request(**kw):
-    base = dict(investigation_id="inv:1", incident_id="inc:1", window_s=3600.0,
-                allowed_evidence_refs=frozenset({"ev:aaa"}))
+    base = {"investigation_id": "inv:1", "incident_id": "inc:1", "window_s": 3600.0,
+                "allowed_evidence_refs": frozenset({"ev:aaa"})}
     base.update(kw)
     return InvestigationRequest(**base)
 

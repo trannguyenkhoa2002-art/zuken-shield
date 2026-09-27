@@ -42,7 +42,7 @@ def test_a_hung_desktop_sender_is_killed_and_reaped(monkeypatch):
     monkeypatch.setattr(notifier, "NOTIFY_TIMEOUT_S", 0.02, raising=False)
 
     async def scenario():
-        assert await asyncio.wait_for(notifier._notify_send_as(None, alert()), 0.5) is False
+        assert await asyncio.wait_for(notifier.notify_desktop_as_user(alert()), 0.5) is False
         assert process.killed and process.reaped
 
     asyncio.run(scenario())
@@ -56,7 +56,7 @@ def test_desktop_delivery_redacts_the_message(monkeypatch):
         return Process()
 
     monkeypatch.setattr(notifier.asyncio, "create_subprocess_exec", spawn)
-    assert asyncio.run(notifier._notify_send_as(None, alert())) is True
+    assert asyncio.run(notifier.notify_desktop_as_user(alert())) is True
     assert "title-secret" not in str(captured)
     assert "body-secret" not in str(captured)
 
@@ -67,7 +67,7 @@ def test_failed_desktop_delivery_has_an_actionable_redacted_warning(monkeypatch,
 
     monkeypatch.setattr(notifier.asyncio, "create_subprocess_exec", spawn)
     with caplog.at_level(logging.WARNING, logger="shield.notifier"):
-        assert asyncio.run(notifier._notify_send_as(None, alert())) is False
+        assert asyncio.run(notifier.notify_desktop_as_user(alert())) is False
     assert "D-Bus unavailable" in caplog.text
     assert "stderr-secret" not in caplog.text
 

@@ -43,7 +43,8 @@ async def dispatch(request: PrivilegedRequest) -> dict:
 
 class HelperServer:
     def __init__(self, path: Path, allowed_uid: int) -> None:
-        self.path, self.allowed_uid, self.server = path, allowed_uid, None
+        self.path, self.allowed_uid = path, allowed_uid
+        self.server: asyncio.Server | None = None
 
     async def handle(self, reader, writer) -> None:
         raw_socket = writer.get_extra_info("socket")
@@ -73,10 +74,11 @@ class HelperServer:
     async def run(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.exists(): self.path.unlink()
-        self.server = await asyncio.start_unix_server(self.handle, path=str(self.path), limit=MAX_REQUEST)
+        server = await asyncio.start_unix_server(self.handle, path=str(self.path), limit=MAX_REQUEST)
+        self.server = server
         os.chmod(self.path, 0o660)
-        async with self.server:
-            await self.server.serve_forever()
+        async with server:
+            await server.serve_forever()
 
 
 def main() -> None:

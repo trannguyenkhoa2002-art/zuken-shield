@@ -120,7 +120,7 @@ class LiveStats:
 
     def drain_feed(self, limit: int = FEED_PER_TICK) -> tuple[list[dict], int]:
         """Lấy các dòng chưa gửi. Trả (dòng, số đã bỏ vì quá nhanh)."""
-        taken = []
+        taken: list[dict] = []
         while self._feed and len(taken) < limit:
             taken.append(self._feed.popleft())
         dropped = self._feed_dropped + len(self._feed)

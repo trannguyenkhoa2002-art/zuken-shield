@@ -22,10 +22,10 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from shield.ai.enrichment import (FAILED, FAILURE_CODES, PENDING, READY, RUNNING,
-                                  STALE, STATUSES)
+                                  STALE)
 
 # --- Trần. Một sự cố không được chiếm cả hàng đợi của máy. ---
 #
@@ -381,9 +381,9 @@ class ChatStore:
         return [self._row(row) for row in reversed(rows)]
 
     def counts(self) -> dict:
-        return {status: count for status, count in self.conn.execute(
+        return dict(self.conn.execute(
             "SELECT status,COUNT(*) FROM chat_messages WHERE status<>'' "
-            "GROUP BY status").fetchall()}
+            "GROUP BY status").fetchall())
 
     def oldest_pending(self) -> ChatMessage | None:
         row = self.conn.execute(

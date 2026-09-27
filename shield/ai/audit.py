@@ -320,7 +320,7 @@ class InvestigationAudit:
             "ORDER BY started_ts DESC LIMIT ?",
             (str(incident_id), max(1, min(int(limit), 100))),
         ).fetchall()
-        return [self.get(row[0]) for row in rows]
+        return [record for row in rows if (record := self.get(row[0])) is not None]
 
     def tool_calls(self, investigation_id: str, limit: int = 200) -> list[dict]:
         rows = self.conn.execute(

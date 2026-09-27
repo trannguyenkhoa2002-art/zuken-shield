@@ -22,7 +22,7 @@ import pytest
 from shield.agent.store import Store
 from shield.ai import enrichment as E
 from shield.ai.enrichment import EnrichmentStore, fingerprint, model_version
-from shield.ai.enrichment_runner import Queue, SharedAiRunner, client_status
+from shield.ai.enrichment_runner import Queue, SharedAiRunner
 from shield.common.models import Alert
 
 NOW = 1000.0
@@ -172,8 +172,8 @@ def test_a_changed_model_version_changes_the_key():
 def test_the_key_covers_every_output_affecting_input():
     """Thiếu một thành phần nghĩa là có một cách để dữ liệu đổi mà khoá không
     đổi — và khi đó Shield phục vụ giải thích đúng cho dữ liệu của hôm qua."""
-    base = dict(incident_id="i", evidence={"a": 1}, locale="vi",
-                provider="local_model", model_version="m1")
+    base = {"incident_id": "i", "evidence": {"a": 1}, "locale": "vi",
+                "provider": "local_model", "model_version": "m1"}
     reference = fingerprint(**base)
     for field, value in (("incident_id", "j"), ("evidence", {"a": 2}),
                          ("locale", "en"), ("provider", "other"),
@@ -462,8 +462,8 @@ def test_the_contract_digest_pins_prompt_grammar_and_slot_shape():
 
 
 def test_changing_the_contract_version_invalidates_old_prose():
-    base = dict(incident_id="i", evidence={"a": 1}, locale="vi",
-                provider="local_model", model_version="m")
+    base = {"incident_id": "i", "evidence": {"a": 1}, "locale": "vi",
+                "provider": "local_model", "model_version": "m"}
     assert fingerprint(**base, contract_version=1) != \
         fingerprint(**base, contract_version=2)
 
@@ -666,8 +666,8 @@ def test_a_genuinely_new_fingerprint_is_not_blocked_by_an_old_failure(tmp_path):
 
 def test_every_input_that_changes_the_answer_makes_a_new_key(tmp_path):
     """§8: đổi bằng chứng/ngôn ngữ/model/hợp đồng -> khoá khác, nên được hỏi lại."""
-    base = dict(incident_id="i1", evidence={"a": 1}, locale="vi",
-                provider="local_model", model_version="v1")
+    base = {"incident_id": "i1", "evidence": {"a": 1}, "locale": "vi",
+                "provider": "local_model", "model_version": "v1"}
     key = fingerprint(**base)
     for field, value in [("evidence", {"a": 2}), ("locale", "en"),
                          ("provider", "other"), ("model_version", "v2"),

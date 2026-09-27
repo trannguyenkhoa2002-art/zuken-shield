@@ -441,7 +441,7 @@ class IncidentsTab(QWidget, I18nMixin):
         self.chat_ask.clicked.connect(self._send_chat)
         chat_row.addWidget(self.chat_ask)
         layout.addLayout(chat_row)
-        self._chat = {}
+        self._chat: dict = {}
         self._chat_polls = 0
         self._chat_timer = QTimer(self)
         self._chat_timer.setInterval(REPORT_POLL_MS)
@@ -515,8 +515,9 @@ class IncidentsTab(QWidget, I18nMixin):
     def _open_report_evidence(self, url) -> None:
         """Mở màn hình Expert Evidence ĐÃ CÓ. Không dựng cái thứ hai."""
         ref = url.toString() if hasattr(url, "toString") else str(url)
-        if ref.startswith("evidence:"):
-            self.window().open_evidence(ref.removeprefix("evidence:"))
+        opener = getattr(self.window(), "open_evidence", None)
+        if ref.startswith("evidence:") and opener is not None:
+            opener(ref.removeprefix("evidence:"))
 
     def _ask_intent(self, code: str) -> None:
         """Bấm nút = gửi CÂU HỎI CHUẨN của ý định đó.
@@ -1094,8 +1095,11 @@ class AlertsTab(QWidget, I18nMixin):
             if alert is None:
                 continue
             title, detail = alert_text(alert)
-            self.table.item(row, 2).setText(title)
-            self.table.item(row, 4).setText(detail)
+            title_item, detail_item = self.table.item(row, 2), self.table.item(row, 4)
+            if title_item is not None:
+                title_item.setText(title)
+            if detail_item is not None:
+                detail_item.setText(detail)
 
 
 class DevicesTab(QWidget, I18nMixin):
@@ -1236,7 +1240,7 @@ class DevicesTab(QWidget, I18nMixin):
             key = {
                 "deep": "devices.scanning_deep",
                 "range": "devices.scanning_range",
-            }.get(kind, "devices.scanning_quick")
+            }.get(str(kind), "devices.scanning_quick")
             self.scan_status_label.setText(t(key))
         else:
             self.scan_status_label.setText("")
@@ -1310,7 +1314,10 @@ class DevicesTab(QWidget, I18nMixin):
         items = self.table.selectedItems()
         if not items:
             return
-        self._selected_id = self.table.item(items[0].row(), 0).data(Qt.ItemDataRole.UserRole)
+        first = self.table.item(items[0].row(), 0)
+        if first is None:
+            return
+        self._selected_id = first.data(Qt.ItemDataRole.UserRole)
         self._show_profile(self._selected())
 
     def _show_profile(self, dev: dict | None) -> None:
@@ -1822,6 +1829,16 @@ class EvidenceTab(QWidget, I18nMixin):
        telemetry bị mất — gộp hai cái đó lại là nói rằng Shield đang mất log
        trong khi nó chỉ đang cuộn màn hình.
     """
+
+    _f_kind: QLineEdit
+    _f_source: QLineEdit
+    _f_origin: QLineEdit
+    _f_pid: QLineEdit
+    _f_ip: QLineEdit
+    _f_port: QLineEdit
+    _f_incident_id: QLineEdit
+    _f_alert_id: QLineEdit
+    _f_event_id: QLineEdit
 
     MAX_ROWS = 500
     WINDOWS = (("evidence.window.1h", 3600), ("evidence.window.6h", 6 * 3600),
@@ -3690,7 +3707,7 @@ class ReportsTab(QWidget, I18nMixin):
                     [fmt_ts(a["ts"]), t(f"severity.{a['severity']}"), alert_text(a)[0], a["subject"]]
                 )
             table = Table(rows, colWidths=[85, 60, 200, 130], repeatRows=1)
-            style_cmds = [
+            style_cmds: list = [
                 ("FONTNAME", (0, 0), (-1, -1), font_regular),
                 ("FONTNAME", (0, 0), (-1, 0), font_bold),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eeeeee")),
@@ -4322,7 +4339,7 @@ class AdvancedSecurityTab(QWidget, I18nMixin):
 
     def _render(self) -> None:
         health = self._status.get("collector_health", [])
-        kernel = next((item for item in health if item.get("component") == "kernel_telemetry"), {})
+        kernel: dict = next((item for item in health if item.get("component") == "kernel_telemetry"), {})
         self._tiles["telemetry"].setText(kernel.get("backend", "—"))
         mitre = self._status.get("mitre", {})
         self._tiles["mitre"].setText(f"{mitre.get('coverage_percent', 0):.1f}%")
@@ -4350,7 +4367,7 @@ class AdvancedSecurityTab(QWidget, I18nMixin):
         self.health_table.setRowCount(0)
         for item in health:
             row = self.health_table.rowCount(); self.health_table.insertRow(row)
-            values = (item.get("component", ""), item.get("backend", ""),
+            values: tuple = (item.get("component", ""), item.get("backend", ""),
                       item.get("state", t("advanced.healthy" if item.get("healthy") else "advanced.unhealthy")),
                       fmt_ts(item.get("last_heartbeat", 0)) if item.get("last_heartbeat") else "—",
                       fmt_ts(item.get("last_event", 0)) if item.get("last_event") else "—",
@@ -4694,7 +4711,7 @@ class MonitoringControl(QWidget, I18nMixin):
 
     # --- gửi lệnh ---------------------------------------------------------
     def _pause(self, scope: str, duration_s: int | None) -> None:
-        command = {"cmd": "pause_monitoring", "scope": scope, "reason": t("switch.reason_manual")}
+        command: dict = {"cmd": "pause_monitoring", "scope": scope, "reason": t("switch.reason_manual")}
         if duration_s is not None:
             command["duration_s"] = duration_s
         self.client.send_command(command)
@@ -4873,7 +4890,7 @@ class MainWindow(QMainWindow):
         self.settings_tab = SettingsTab(self.store, self.client)
         self.help_tab = HelpTab()
 
-        self._tab_order = [
+        self._tab_order: list = [
             (self.overview_tab, "nav.overview"),
             (self.incidents_tab, "nav.incidents"),
             (self.alerts_tab, "nav.alerts"),
@@ -5014,8 +5031,9 @@ class MainWindow(QMainWindow):
             outer, inner = location
             self.tabs.setCurrentIndex(outer)
             section = self.tabs.widget(outer)
-            if hasattr(section, "setCurrentIndex"):
-                section.setCurrentIndex(inner)
+            select = getattr(section, "setCurrentIndex", None)
+            if select is not None:
+                select(inner)
         self.evidence_tab.open_event(event_id)
 
     def _update_page_header(self, _index: int = 0) -> None:
@@ -5063,7 +5081,7 @@ class MainWindow(QMainWindow):
 
     def _on_appearance_changed(self, mode: str) -> None:
         app = QApplication.instance()
-        if app is not None:
+        if isinstance(app, QApplication):
             app.setStyleSheet(theme.STYLES.get(mode, theme.QSS))
 
     def _on_audit_requested(self, ip: str) -> None:

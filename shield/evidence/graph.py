@@ -263,7 +263,8 @@ class EvidenceGraph:
         người điều tra thật sự hỏi, và nó luôn là chiều ngược.
         """
         limit = max(1, min(int(limit), MAX_LIMIT))
-        clauses, params = [], []
+        clauses: list[str] = []
+        params: list[str | int] = []
         if direction in {"out", "both"}:
             clauses.append("src_id=?")
             params.append(entity_id)

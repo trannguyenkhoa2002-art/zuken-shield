@@ -113,10 +113,13 @@ class EventRule:
                 return False
             if not isinstance(actual, (int, float)):
                 try:
-                    actual = float(actual)
+                    actual = float(actual)  # type: ignore[arg-type]  # except bên dưới lo kiểu sai
                 except (TypeError, ValueError):
                     return False
-            return actual >= self.value if self.operator == "gte" else actual <= self.value
+            bound = self.value
+            if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+                return False
+            return actual >= bound if self.operator == "gte" else actual <= bound
 
         if not isinstance(actual, str) or not isinstance(self.value, str):
             return False
@@ -178,7 +181,7 @@ class RuleDetector:
             if header.get("pack_type", "event") != "event":
                 continue
             signature = path.with_suffix(path.suffix + ".sig") if public_key else None
-            if public_key and not signature.exists():
+            if signature is not None and not signature.exists():
                 raise ValueError(f"rule pack chưa được ký: {path.name}")
             rules.extend(cls.load_rules(path, public_key, signature))
         return cls(rules)

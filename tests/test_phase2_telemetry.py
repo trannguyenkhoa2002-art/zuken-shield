@@ -19,7 +19,6 @@ import os
 import time
 from pathlib import Path
 
-import pytest
 
 from shield.agent.collectors.flowagg import FlowAggregator
 from shield.agent.collectors.kernel import _identity, _parent_identity, _read_proc_identity

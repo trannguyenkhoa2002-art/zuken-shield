@@ -66,7 +66,6 @@ def test_the_startup_budget_has_real_margin():
     """Ngân sách phải còn dư nhiều lần thời gian khởi động nguội đã đo (46 giây)."""
     unit = UNIT.read_text(encoding="utf-8")
     watchdog_s = int(re.search(r"^WatchdogSec=(\d+)", unit, re.MULTILINE).group(1))
-    body = _watchdog_source()
     # Ping đầu xảy ra ngay sau khi store trả lời, nên ngân sách khởi động là
     # gần trọn `WatchdogSec` thay vì `WatchdogSec - interval`.
     assert watchdog_s >= 90, watchdog_s

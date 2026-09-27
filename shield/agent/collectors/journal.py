@@ -49,6 +49,7 @@ async def journal_loop(event_bus: Bus) -> None:
             return  # lỗi cấu hình máy, không phải sự cố thoáng qua — retry vô ích
 
         logger.info("journal collector bắt đầu (journalctl -f)")
+        assert proc.stdout is not None  # stdout=PIPE ở trên
         try:
             while True:
                 line = await proc.stdout.readline()

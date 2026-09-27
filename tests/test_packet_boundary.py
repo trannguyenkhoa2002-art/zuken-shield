@@ -157,7 +157,6 @@ def test_malformed_helper_output_is_dropped(raw):
     {"known": ["a"] * 100}, {"ip": {"nested": "object"}},
 ])
 def test_hostile_payload_values_are_rejected(payload):
-    from packet_helper.protocol import envelope
 
     from shield.agent.collectors.packet_ingest import parse_line
 

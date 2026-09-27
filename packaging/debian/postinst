@@ -45,6 +45,13 @@ if [ -d /run/systemd/system ] && command -v systemctl >/dev/null; then
         echo "!!  Không bật được shield-guardian.timer — Shield vẫn chạy, nhưng" >&2
         echo "!!  sẽ KHÔNG phát hiện được việc agent bị dừng trái phép." >&2
     fi
+    # Thông báo desktop chạy trong PHIÊN NGƯỜI DÙNG (user unit), không phải
+    # từ agent root. `--global` bật nó cho mọi phiên đăng nhập về sau; phiên
+    # đang mở cần đăng nhập lại (hoặc `systemctl --user start shield-notify`).
+    if ! systemctl --global enable shield-notify.service; then
+        echo "!!  Không bật được shield-notify (user unit) — Shield vẫn chạy, nhưng" >&2
+        echo "!!  thông báo desktop và cảnh báo 'agent không chạy' sẽ không hiện." >&2
+    fi
     if ! systemctl enable --now shield-privileged.service shield-agent.service; then
         echo "!!  Không khởi động được service Shield." >&2
         systemctl --no-pager --full status shield-privileged.service shield-agent.service || true

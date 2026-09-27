@@ -1,0 +1,23 @@
+[Unit]
+Description=Shield notify — thông báo desktop của Shield và báo khi agent ngừng chạy
+Documentation=file:/usr/share/doc/shield-monitor/USER_GUIDE.md
+# Cần phiên đồ hoạ (D-Bus của người dùng) để notify-send hiện được.
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# Chạy bằng chính user của phiên, KHÔNG chuyển quyền: đây là lý do dịch vụ
+# này tồn tại (agent root không gọi notify-send vào phiên người dùng được dưới
+# hardening của nó). User phải thuộc nhóm `shield` để mở được socket agent.
+Environment=SHIELD_SOCK=/run/shield/shield.sock
+ExecStart=/opt/shield/.venv/bin/shield-notify
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+MemoryMax=96M
+
+[Install]
+WantedBy=graphical-session.target

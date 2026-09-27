@@ -757,7 +757,7 @@ def test_every_label_key_exists_in_both_languages():
 def test_the_reason_table_never_renders_a_free_text_field():
     """Nếu ai đó thêm một trường văn xuôi vào lý do gộp, nó phải KHÔNG hiện
     ra ở đây. Store đã từ chối trường lạ; đây là lớp thứ hai."""
-    rows = _rows([_reason(**{})], [1])
+    rows = _rows([_reason()], [1])
     values = [value for _, value in rows]
     assert not any(len(value) > 80 for value in values), values
     smuggled = _reason()

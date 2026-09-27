@@ -157,7 +157,7 @@ class AiEvalReport:
     def gate_results(self) -> dict:
         """Từng cổng: `True`, `False`, hoặc `None` khi CHƯA ĐO."""
         data = self.to_dict()
-        results = {}
+        results: dict = {}
         for name, threshold in GATES.items():
             value = data.get(name)
             if value is None:

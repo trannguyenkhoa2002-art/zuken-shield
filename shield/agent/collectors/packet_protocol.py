@@ -115,7 +115,7 @@ def clean_payload(raw) -> dict | None:
         elif key in _LIST_KEYS:
             if not isinstance(value, list) or len(value) > MAX_LIST_ITEMS:
                 return None
-            items = []
+            items: list[int | str] = []
             for item in value:
                 if isinstance(item, bool) or isinstance(item, int):
                     if not 0 <= int(item) <= 2**32:

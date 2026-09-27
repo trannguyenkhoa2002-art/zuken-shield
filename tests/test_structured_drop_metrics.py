@@ -9,10 +9,7 @@ sinh ra một CÂU thay vì sinh ra DỮ LIỆU.
 
 from __future__ import annotations
 
-import time
-from pathlib import Path
 
-import pytest
 
 from shield.agent.collectors.kernel import PROBES, ProbeSupport, _report
 from shield.agent.collectors.ratelimit import RateLimiter
@@ -104,7 +101,6 @@ def test_viewer_evictions_are_not_telemetry_loss():
     """Người xem đọc chậm là giới hạn MÀN HÌNH: event vẫn nằm nguyên trong
     database và tra lại được qua Expert Evidence. Cộng nó vào con số mất
     telemetry sẽ biến một giao diện đang cuộn chậm thành một Shield đang mù."""
-    import ast
     import inspect
 
     import shield.agent.__main__ as M

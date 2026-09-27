@@ -93,7 +93,7 @@ def normalize_record(raw: dict, probe_id: str, remote_addr: str) -> Event | None
     if not (now_ts - 86400 * 7) <= ts <= (now_ts + 300):
         ts = now_ts
 
-    clean = {}
+    clean: dict[str, str | int | float | bool | None] = {}
     for key, value in list(data.items())[:40]:
         key = str(key)[:48]
         if isinstance(value, str):

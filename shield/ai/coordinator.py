@@ -18,11 +18,9 @@ kiểu đưa cho model". Không thêm hợp đồng thứ hai cho cùng một kh
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import json
 import logging
-import time
 
 from shield.ai.capability import CapabilityDenied, ai_tools_killed
 from shield.ai.contracts import InvestigationRequest, InvestigationResult, SchemaViolation
@@ -167,7 +165,8 @@ class Coordinator:
     async def run(self, request: InvestigationRequest):
         """-> (kết quả, vết). KHÔNG ném ra ngoài trừ khi orchestrator bắt."""
         self.trace = trace = CoordinatorTrace()
-        self.observations = observations = ()
+        observations: tuple[dict, ...] = ()
+        self.observations = observations
         result: InvestigationResult | None = None
 
         for round_index in range(self.max_rounds):

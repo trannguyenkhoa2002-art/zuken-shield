@@ -601,7 +601,6 @@ from shield.agent.bus import Bus
 from shield.agent.collectors.endpoint import emit_bootstrap_listeners
 from shield.agent.detectors.endpoint import (
     BOOTSTRAP_ALERT_COOLDOWN_S,
-    SENSITIVE_LISTENER_PORTS,
     EndpointDetector,
 )
 
@@ -1127,7 +1126,6 @@ def test_a_type_still_at_version_one_is_not_rebuilt(tmp_path):
 
 
 def test_the_resolver_is_still_the_only_place_that_creates_services():
-    import ast as _ast
 
     creators = []
     for path in sorted(ROOT.glob("shield/**/*.py")):

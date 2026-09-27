@@ -18,15 +18,12 @@ hết backlog.
 
 from __future__ import annotations
 
-import json
 import time
-from pathlib import Path
 
-import pytest
 
 from shield.agent.store import (GRAPH_PRUNE_CURSOR_KEY, GRAPH_PRUNE_MAX_EDGES,
                                 RETENTION_DELETE_LIMIT, SIZE_CAP_MAX_BATCHES, Store)
-from shield.common.models import Alert, Event
+from shield.common.models import Event
 from shield.evidence.graph import EvidenceGraph
 
 OLD = time.time() - 400 * 86400

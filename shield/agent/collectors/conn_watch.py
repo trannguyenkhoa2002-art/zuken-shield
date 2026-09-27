@@ -30,7 +30,6 @@ import asyncio
 import logging
 import re
 import subprocess
-import time
 
 from shield.agent.bus import Bus
 from shield.agent.collectors.flowagg import FlowAggregator

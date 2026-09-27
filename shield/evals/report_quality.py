@@ -164,7 +164,7 @@ class QualityReport:
 
     def gate_results(self, gates: dict) -> dict:
         data = self.to_dict()
-        results = {}
+        results: dict = {}
         for name, threshold in gates.items():
             value = data.get(name)
             if value is None:

@@ -41,6 +41,8 @@ logger = logging.getLogger("shield.ipc")
 
 CommandHandler = Callable[[dict], Awaitable[None]]
 MAX_MESSAGE_BYTES = 64 * 1024
+# Lệnh mức IPC (không đi tới handle_command): client xin nhận thông báo desktop.
+SUBSCRIBE_NOTIFICATIONS = "subscribe_desktop_notifications"
 RATE_LIMIT_COMMANDS = 60
 RATE_WINDOW_S = 10.0
 
@@ -97,6 +99,11 @@ class IpcServer:
         self._clients: dict[str, asyncio.StreamWriter] = {}
         self._server: asyncio.AbstractServer | None = None
         self._on_command = on_command
+        # Client đã xin nhận thông báo desktop (shield-notify trong phiên
+        # người dùng). Tách khỏi `broadcast`: UI không cần bản tin này, và số
+        # phiên thật sự nhận là thứ notifier phải biết để không báo "đã gửi"
+        # khi không ai nghe.
+        self._notification_clients: set[str] = set()
 
     async def start(self) -> None:
         self.sock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -189,6 +196,12 @@ class IpcServer:
                     await self.send_to(client_id, "command_error", {"request_id": msg["request_id"], "error": "rate limit exceeded"})
                     continue
                 recent_commands.append(now_ts)
+                if msg.get("cmd") == SUBSCRIBE_NOTIFICATIONS:
+                    self._notification_clients.add(client_id)
+                    logger.info("shield-notify đăng ký nhận thông báo desktop (uid=%s pid=%s)", uid, pid)
+                    await self.send_to(client_id, "notifications_subscribed",
+                                       {"request_id": request_id})
+                    continue
                 msg["_peer"] = peer
                 if self._on_command is not None:
                     await self._on_command(msg)
@@ -198,6 +211,7 @@ class IpcServer:
             if writer in self._writers:
                 self._writers.remove(writer)
             self._clients.pop(client_id, None)
+            self._notification_clients.discard(client_id)
             logger.info("UI client ngắt kết nối (còn %d)", len(self._writers))
 
     async def send_to(self, client_id: str, msg_type: str, data: dict) -> bool:
@@ -211,6 +225,16 @@ class IpcServer:
             return True
         except (ConnectionResetError, BrokenPipeError):
             return False
+
+    async def send_desktop_notification(self, payload: dict) -> int:
+        """Gửi thông báo tới mọi `shield-notify` đã đăng ký; trả về số phiên nhận."""
+        delivered = 0
+        for client_id in list(self._notification_clients):
+            if await self.send_to(client_id, "desktop_notification", payload):
+                delivered += 1
+            else:
+                self._notification_clients.discard(client_id)
+        return delivered
 
     def has_clients(self) -> bool:
         """Có giao diện nào đang nghe không.

@@ -233,10 +233,6 @@ async def watchdog_loop(store: Store) -> None:
     bắt: agent còn sống nhưng đã kẹt.
     """
     interval = sdnotify.watchdog_interval_s()
-    if interval <= 0:
-        return
-    sdnotify.notify("READY=1")
-    logger.info("Watchdog systemd: ping mỗi %.0f giây", interval)
 
     async def alive() -> bool:
         """Store có trả lời không. Đây là thứ làm cái ping CÓ NGHĨA."""
@@ -264,12 +260,34 @@ async def watchdog_loop(store: Store) -> None:
     # Ping đầu vẫn phải CHỨNG MINH được: nó chỉ được gửi sau khi store trả lời,
     # y hệt mọi ping sau. Đây không phải nới hạn, và cũng không phải một luồng
     # ping giả — nó chỉ thôi lãng phí trọn một chu kỳ trước lần chứng minh đầu.
+    #
+    # Bản sửa trên CHƯA ĐỦ, và journal chứng minh điều đó: sau khi cài nó vẫn
+    # có 41 lần watchdog timeout (29/08–27/09/2026), trong đó các lần boot
+    # nguội chết TRƯỚC cả dòng log khởi động đầu tiên — tức khởi động nguội
+    # có lúc vượt 90 giây, không phải 46. Với `Type=simple` thì không ping
+    # nào cứu được trường hợp đó. Unit giờ là `Type=notify`: systemd chỉ bật
+    # watchdog SAU `READY=1`, còn khởi động có hạn riêng là `TimeoutStartSec`.
+    # `READY=1` cũng chỉ được gửi khi store đã trả lời.
+    ready_sent = False
     if await alive():
-        sdnotify.notify("WATCHDOG=1")
+        sdnotify.notify("READY=1")
+        ready_sent = True
+        if interval > 0:
+            sdnotify.notify("WATCHDOG=1")
+    if interval <= 0:
+        if not ready_sent:
+            # Không có watchdog thì không có lượt kiểm lại nào sau này: vẫn
+            # báo READY để systemd không giết agent vì quá hạn khởi động.
+            sdnotify.notify("READY=1")
+        return
+    logger.info("Watchdog systemd: ping mỗi %.0f giây", interval)
 
     while True:
         await asyncio.sleep(interval)
         if await alive():
+            if not ready_sent:
+                sdnotify.notify("READY=1")
+                ready_sent = True
             sdnotify.notify("WATCHDOG=1")
 
 
@@ -516,6 +534,15 @@ async def run_event_consumer(
 # dài thành một đống rác không bao giờ dọn hết.
 MAINTENANCE_INTERVAL_S = 6 * 3600
 MAINTENANCE_BUSY_INTERVAL_S = 60
+INTEGRITY_CHECK_INTERVAL_S = 86400
+
+
+def backup_keep_count() -> int:
+    """Số bản sao lưu tự động giữ lại cho mỗi loại (SHIELD_BACKUP_KEEP, mặc định 3)."""
+    try:
+        return max(1, int(os.environ.get("SHIELD_BACKUP_KEEP", "3")))
+    except ValueError:
+        return 3
 
 
 async def maintenance_loop(store: Store, alert_bus: Bus) -> None:
@@ -532,22 +559,35 @@ async def maintenance_loop(store: Store, alert_bus: Bus) -> None:
                 prune_managed_files, pcap_dir, retention_days=policy.pcap_days,
                 maximum_bytes=policy.pcap_max_bytes,
             )
-            integrity_ok, integrity_message = await asyncio.to_thread(store.check_integrity)
-            store.set_system_health(
-                "database_integrity", 1 if integrity_ok else 0, "boolean",
-                "healthy" if integrity_ok else "failed", integrity_message,
-            )
-            if not integrity_ok:
-                await alert_bus.publish(Alert(
-                    now(), "SHIELD_DATABASE_INTEGRITY_FAILED", "critical",
-                    "Shield database integrity check failed", integrity_message,
-                    str(store.path), evidence={"observed": True, "database": str(store.path),
-                                               "integrity_result": integrity_message},
-                    playbook=["snapshot_state"],
-                ))
+            # integrity_check đọc TOÀN BỘ file (~19 giây trên 2,5 GB, cache
+            # nóng). Trước đây nó chạy ở MỌI lượt — kể cả các lượt "còn việc"
+            # cách nhau một phút — và trên kết nối chung, tức giữ khoá mà ping
+            # watchdog cần. Giờ: kết nối đọc riêng, tối đa một lần mỗi ngày.
+            last_integrity = float(store.get_baseline("database_last_integrity_check") or 0)
+            if time.time() - last_integrity >= INTEGRITY_CHECK_INTERVAL_S:
+                integrity_ok, integrity_message = await asyncio.to_thread(
+                    store.check_integrity, separate_connection=True)
+                store.set_baseline("database_last_integrity_check", str(time.time()))
+                store.set_system_health(
+                    "database_integrity", 1 if integrity_ok else 0, "boolean",
+                    "healthy" if integrity_ok else "failed", integrity_message,
+                )
+                if not integrity_ok:
+                    await alert_bus.publish(Alert(
+                        now(), "SHIELD_DATABASE_INTEGRITY_FAILED", "critical",
+                        "Shield database integrity check failed", integrity_message,
+                        str(store.path), evidence={"observed": True, "database": str(store.path),
+                                                   "integrity_result": integrity_message},
+                        playbook=["snapshot_state"],
+                    ))
             automatic_backup = store.get_baseline("automatic_backup_enabled") != "0"
             last_backup = float(store.get_baseline("database_last_backup") or 0)
             if automatic_backup and time.time() - last_backup >= 86400:
+                # Dọn TRƯỚC khi chép: file tạm bỏ dở của lượt bị giết và các
+                # bản cũ vượt số lượng giữ lại, để lượt chép mới có chỗ.
+                pruned = await asyncio.to_thread(store.prune_backups, backup_keep_count())
+                if pruned["deleted"] or pruned["temporary_deleted"]:
+                    logger.info("Dọn sao lưu cũ: %s", pruned)
                 backup_path = store.path.parent / "backups" / f"shield-{int(time.time())}.db"
                 await asyncio.to_thread(store.backup_database, backup_path)
                 store.set_baseline("database_last_backup", str(time.time()))
@@ -964,6 +1004,11 @@ async def evasion_loop(store: Store, ipc: IpcServer, iface: str | None) -> None:
     tắt: khôi phục MAC gốc ngay trong vòng lặp tiếp theo, không để máy kẹt
     lại ở 1 MAC ngẫu nhiên.
     """
+    if not iface:
+        # Né tránh đổi MAC/IP của MỘT interface cụ thể; không dò được thì không
+        # có gì để đổi hay khôi phục (trước đây None đi thẳng vào lệnh ip link).
+        logger.info("evasion: không xác định được interface — vòng né tránh không chạy")
+        return
     was_enabled = False
     next_rotation = 0.0
 
@@ -1207,10 +1252,9 @@ async def router_traffic_loop(store: Store, ipc: IpcServer, interface: str | Non
                 continue
             raw = store.get_baseline(ROUTER_BACKEND_CONFIG_KEY)
             config = json.loads(raw) if raw else {"type": "disabled"}
-            if config.get("type") not in (None, "disabled"):
-                lan_subnet = await asyncio.to_thread(
-                    detect_subnet, interface or await asyncio.to_thread(detect_interface)
-                )
+            poll_iface = interface or await asyncio.to_thread(detect_interface)
+            if config.get("type") not in (None, "disabled") and poll_iface:
+                lan_subnet = await asyncio.to_thread(detect_subnet, poll_iface)
                 ok, msg, hosts = await router_backends.poll(config, lan_subnet)
                 if not ok:
                     logger.warning("router_traffic_loop: %s", msg)
@@ -1580,7 +1624,6 @@ async def execute_enrichment_job(store, job) -> tuple[dict | None, str]:
     chừng.
     """
     from shield.ai.capability import ai_tools_killed
-    from shield.ai.enrichment import EnrichmentStore
     from shield.ai.model_config import from_environment
     from shield.ai.worker.protocol import WorkerRequest
     from shield.ai.worker.supervisor import WorkerFailure
@@ -1914,7 +1957,8 @@ async def handle_command(
     ra ngoài (xem tarpit.py).
     """
     cmd = msg.get("cmd")
-    peer = msg.get("_peer") if isinstance(msg.get("_peer"), dict) else {}
+    raw_peer = msg.get("_peer")
+    peer: dict = raw_peer if isinstance(raw_peer, dict) else {}
     client_id = str(peer.get("client_id", ""))
     principal = f"uid={peer.get('uid', '?')}:pid={peer.get('pid', '?')}:client={client_id}"
     request_id = str(msg.get("request_id", ""))
@@ -2082,9 +2126,9 @@ async def handle_command(
         except (TypeError, ValueError):
             limit = 500
         lang = "vi" if msg.get("lang") == "vi" else "en"
-        result = await LocalSummaryAnalyzer().analyze(store.recent_alerts(limit=limit), lang=lang)
-        store.add_audit_log("local_analysis", {"limit": limit}, f"analyzed {result.record_count} records")
-        await ipc.send_to(client_id, "analysis_result", {**result.__dict__, "request_id": request_id})
+        analysis = await LocalSummaryAnalyzer().analyze(store.recent_alerts(limit=limit), lang=lang)
+        store.add_audit_log("local_analysis", {"limit": limit}, f"analyzed {analysis.record_count} records")
+        await ipc.send_to(client_id, "analysis_result", {**analysis.__dict__, "request_id": request_id})
 
     elif cmd in {"response_jobs_now", "response_job_detail", "response_approve",
                  "response_deny", "response_rollback"}:
@@ -2112,7 +2156,7 @@ async def handle_command(
         if cmd == "response_job_detail" and job_id:
             await ipc.broadcast("response_job_detail", {
                 "job_id": job_id,
-                "job": (jobs_store.get(job_id).to_dict() if jobs_store.get(job_id) else None),
+                "job": (job.to_dict() if (job := jobs_store.get(job_id)) else None),
                 "transitions": jobs_store.transitions(job_id),
                 "verifications": jobs_store.verifications(job_id),
             })
@@ -2260,13 +2304,13 @@ async def handle_command(
         if older_than_days is not None and not 0 < older_than_days <= 3650:
             logger.warning("reset_scan_session: khoảng thời gian ngoài giới hạn")
             return
-        result = await asyncio.to_thread(store.reset_scan_session, older_than_days)
+        reset = await asyncio.to_thread(store.reset_scan_session, older_than_days)
         logger.warning("Làm mới phiên quét: quên %d thiết bị (%s)",
-                       result["devices_removed"],
+                       reset["devices_removed"],
                        "tất cả" if older_than_days is None else f"cũ hơn {older_than_days} ngày")
         await ipc.broadcast("scan_session_reset", {
-            "devices_removed": result["devices_removed"],
-            "identities_removed": result["identities_removed"],
+            "devices_removed": reset["devices_removed"],
+            "identities_removed": reset["identities_removed"],
         })
         await ipc.broadcast("devices_updated", {"reason": "scan_session_reset"})
 
@@ -2340,62 +2384,65 @@ async def handle_command(
         logger.info("Baseline gateway: %s -> %s", gw_ip, gw_mac)
 
     elif cmd == "pin_gateway_arp":
-        gw_ip = store.get_baseline(BASELINE_GW_IP)
-        gw_mac = store.get_baseline(BASELINE_GW_MAC)
+        gw_ip = store.get_baseline(BASELINE_GW_IP) or ""
+        gw_mac = store.get_baseline(BASELINE_GW_MAC) or ""
         if not gw_ip or not gw_mac:
             logger.warning("pin_gateway_arp: chưa có baseline gateway, bỏ qua")
             return
         iface = interface or await asyncio.to_thread(detect_interface)
-        ok, result = await actions.pin_gateway_arp(gw_ip, gw_mac, iface)
+        if not iface:
+            logger.warning("pin_gateway_arp: không dò được interface, bỏ qua")
+            return
+        ok, outcome = await actions.pin_gateway_arp(gw_ip, gw_mac, iface)
         store.add_audit_log(
-            "pin_gateway_arp", {"gw_ip": gw_ip, "gw_mac": gw_mac, "interface": iface}, result
+            "pin_gateway_arp", {"gw_ip": gw_ip, "gw_mac": gw_mac, "interface": iface}, outcome
         )
-        logger.info("pin_gateway_arp %s: %s", "OK" if ok else "THẤT BẠI", result)
+        logger.info("pin_gateway_arp %s: %s", "OK" if ok else "THẤT BẠI", outcome)
 
     elif cmd == "block_ip":
         ip = str(msg.get("ip", ""))
-        ok, result = await run_privileged_action(privileged_client, "block_ip", {"ip": ip})
-        store.add_audit_log("block_ip", {"ip": ip}, result)
+        ok, outcome = await run_privileged_action(privileged_client, "block_ip", {"ip": ip})
+        store.add_audit_log("block_ip", {"ip": ip}, outcome)
         if ok:
             store.record_block("ip", ip, ttl_hours=24)
             await ipc.broadcast("blocks_updated", {"blocks": store.list_active_blocks()})
-        logger.info("block_ip %s: %s", "OK" if ok else "THẤT BẠI", result)
+        logger.info("block_ip %s: %s", "OK" if ok else "THẤT BẠI", outcome)
 
     elif cmd == "unblock_ip":
         ip = str(msg.get("ip", ""))
-        ok, result = await run_privileged_action(privileged_client, "unblock_ip", {"ip": ip})
-        store.add_audit_log("unblock_ip", {"ip": ip}, result)
+        ok, outcome = await run_privileged_action(privileged_client, "unblock_ip", {"ip": ip})
+        store.add_audit_log("unblock_ip", {"ip": ip}, outcome)
         if ok:
             store.remove_block("ip", ip)
             await ipc.broadcast("blocks_updated", {"blocks": store.list_active_blocks()})
-        logger.info("unblock_ip %s: %s", "OK" if ok else "THẤT BẠI", result)
+        logger.info("unblock_ip %s: %s", "OK" if ok else "THẤT BẠI", outcome)
 
     elif cmd == "block_mac":
         mac = str(msg.get("mac", "")).lower()
-        ok, result = await run_privileged_action(privileged_client, "block_mac", {"mac": mac})
-        store.add_audit_log("block_mac", {"mac": mac}, result)
+        ok, outcome = await run_privileged_action(privileged_client, "block_mac", {"mac": mac})
+        store.add_audit_log("block_mac", {"mac": mac}, outcome)
         if ok:
             store.record_block("mac", mac, ttl_hours=24)
             await ipc.broadcast("blocks_updated", {"blocks": store.list_active_blocks()})
-        logger.info("block_mac %s: %s", "OK" if ok else "THẤT BẠI", result)
+        logger.info("block_mac %s: %s", "OK" if ok else "THẤT BẠI", outcome)
 
     elif cmd == "unblock_mac":
         mac = str(msg.get("mac", "")).lower()
-        ok, result = await run_privileged_action(privileged_client, "unblock_mac", {"mac": mac})
-        store.add_audit_log("unblock_mac", {"mac": mac}, result)
+        ok, outcome = await run_privileged_action(privileged_client, "unblock_mac", {"mac": mac})
+        store.add_audit_log("unblock_mac", {"mac": mac}, outcome)
         if ok:
             store.remove_block("mac", mac)
             await ipc.broadcast("blocks_updated", {"blocks": store.list_active_blocks()})
-        logger.info("unblock_mac %s: %s", "OK" if ok else "THẤT BẠI", result)
+        logger.info("unblock_mac %s: %s", "OK" if ok else "THẤT BẠI", outcome)
 
     elif cmd == "snapshot_state":
-        ok, result = await actions.snapshot_state()
-        store.add_audit_log("snapshot_state", {}, result)
-        logger.info("snapshot_state %s: %s", "OK" if ok else "THẤT BẠI", result)
+        ok, outcome = await actions.snapshot_state()
+        store.add_audit_log("snapshot_state", {}, outcome)
+        logger.info("snapshot_state %s: %s", "OK" if ok else "THẤT BẠI", outcome)
 
     elif cmd == "watch_device":
         ip = str(msg.get("ip", ""))
-        mac = msg.get("mac")
+        watch_mac = msg.get("mac")
         if not _IP_RE.match(ip):
             logger.warning("watch_device: IP không hợp lệ: %r", ip)
             return
@@ -2404,7 +2451,7 @@ async def handle_command(
             await ipc.send_to(client_id, "watch_status",
                               {"ip": ip, "ok": False, "paused": True})
             return
-        started = await traffic_manager.watch(ip, mac)
+        started = await traffic_manager.watch(ip, watch_mac)
         logger.info("watch_device %s: %s", ip, "bắt đầu" if started else "đã theo dõi từ trước")
 
     elif cmd == "unwatch_device":
@@ -2494,14 +2541,14 @@ async def handle_command(
         # Đóng/mở lại một sự việc từ UI (mục B5). Trước đây store có hàm này
         # nhưng không có đường nào gọi tới — sự việc mở ra rồi ở mãi đó.
         incident_id = str(msg.get("incident_id", ""))
-        state = str(msg.get("state", ""))
+        new_state = str(msg.get("state", ""))
         try:
-            changed = store.set_incident_state(incident_id, state)
+            changed = store.set_incident_state(incident_id, new_state)
         except ValueError as exc:
             await ipc.send_to(client_id, "command_error", {"cmd": cmd, "error": str(exc)})
             return
         store.add_audit_log("incident_set_state",
-                            {"incident_id": incident_id, "state": state, "principal": principal},
+                            {"incident_id": incident_id, "state": new_state, "principal": principal},
                             "ok" if changed else "không tìm thấy sự việc")
         await ipc.broadcast("incidents_updated", {"incidents": store.list_incidents(limit=100)})
 
@@ -2550,10 +2597,10 @@ async def handle_command(
     elif cmd == "add_authorized_range":
         cidr = str(msg.get("cidr", "")).strip()
         note = str(msg.get("note", "")).strip()
-        ok, result = actions.validate_authorized_cidr(cidr)
+        ok, normalized = actions.validate_authorized_cidr(cidr)
         if not ok:
-            logger.warning("add_authorized_range: %s", result)
-            await ipc.broadcast("authorized_range_error", {"error": result})
+            logger.warning("add_authorized_range: %s", normalized)
+            await ipc.broadcast("authorized_range_error", {"error": normalized})
             return
         if not note:
             logger.warning("add_authorized_range: thiếu lý do/căn cứ cấp phép, từ chối")
@@ -2565,9 +2612,9 @@ async def handle_command(
                 },
             )
             return
-        store.add_authorized_range(result, note)
-        store.add_audit_log("add_authorized_range", {"cidr": result, "note": note}, "OK")
-        logger.info("Đã thêm dải được cấp phép: %s (%s)", result, note)
+        store.add_authorized_range(normalized, note)
+        store.add_audit_log("add_authorized_range", {"cidr": normalized, "note": note}, "OK")
+        logger.info("Đã thêm dải được cấp phép: %s (%s)", normalized, note)
         await ipc.broadcast("authorized_ranges_updated", {"ranges": store.list_authorized_ranges()})
 
     elif cmd == "remove_authorized_range":
@@ -2580,23 +2627,31 @@ async def handle_command(
     elif cmd == "scan_authorized_range":
         cidr = str(msg.get("cidr", "")).strip()
         try:
-            target = ipaddress.ip_network(cidr, strict=False)
+            target_net = ipaddress.ip_network(cidr, strict=False)
         except ValueError:
             logger.warning("scan_authorized_range: cidr không hợp lệ %r", cidr)
             return
+        def _within(cidr: str) -> bool:
+            allowed = ipaddress.ip_network(cidr, strict=False)
+            # subnet_of giữa IPv4 và IPv6 ném TypeError: một dải IPv6 trong
+            # danh sách từng đủ làm hỏng lệnh quét một dải IPv4.
+            if allowed.version != target_net.version:
+                return False
+            return target_net.subnet_of(allowed)  # type: ignore[arg-type]
+
         authorized = any(
-            str(target) == r["cidr"] or target.subnet_of(ipaddress.ip_network(r["cidr"], strict=False))
+            str(target_net) == r["cidr"] or _within(r["cidr"])
             for r in store.list_authorized_ranges()
         )
         if not authorized:
             logger.warning("scan_authorized_range: %s KHÔNG nằm trong danh sách cấp phép — từ chối", cidr)
             store.add_audit_log("scan_authorized_range_denied", {"cidr": cidr}, "Chưa được cấp phép")
             return
-        asyncio.create_task(run_range_scan(str(target), store, event_bus, ipc))
+        asyncio.create_task(run_range_scan(str(target_net), store, event_bus, ipc))
 
     elif cmd == "set_router_backend":
         kind = str(msg.get("backend_type", "disabled"))
-        config: dict = {"type": kind}
+        backend_config: dict = {"type": kind}
         if kind == "ssh_conntrack":
             host = str(msg.get("host", "")).strip()
             if not host:
@@ -2606,7 +2661,7 @@ async def handle_command(
                     {"error_key": "err.missing_router_host", "error": "Thiếu địa chỉ router"},
                 )
                 return
-            config.update(
+            backend_config.update(
                 host=host,
                 user=str(msg.get("user", "root")).strip() or "root",
                 port=int(msg.get("port", 22) or 22),
@@ -2621,19 +2676,23 @@ async def handle_command(
                     {"error_key": "err.missing_script_path", "error": "Thiếu đường dẫn script"},
                 )
                 return
-            config.update(path=path)
+            backend_config.update(path=path)
         elif kind != "disabled":
             logger.warning("set_router_backend: loại không hỗ trợ %r", kind)
             return
-        store.set_baseline(ROUTER_BACKEND_CONFIG_KEY, json.dumps(config))
-        store.add_audit_log("set_router_backend", config, "OK")
+        store.set_baseline(ROUTER_BACKEND_CONFIG_KEY, json.dumps(backend_config))
+        store.add_audit_log("set_router_backend", backend_config, "OK")
         logger.info("Đã cấu hình router backend: %s", kind)
 
     elif cmd == "poll_router_traffic_now":
-        raw = store.get_baseline(ROUTER_BACKEND_CONFIG_KEY)
-        config = json.loads(raw) if raw else {"type": "disabled"}
-        lan_subnet = await asyncio.to_thread(detect_subnet, interface or await asyncio.to_thread(detect_interface))
-        ok, msg2, hosts = await router_backends.poll(config, lan_subnet)
+        raw_backend = store.get_baseline(ROUTER_BACKEND_CONFIG_KEY)
+        backend_config = json.loads(raw_backend) if raw_backend else {"type": "disabled"}
+        poll_iface = interface or await asyncio.to_thread(detect_interface)
+        lan_subnet = await asyncio.to_thread(detect_subnet, poll_iface) if poll_iface else None
+        if not lan_subnet:
+            await ipc.broadcast("router_backend_error", {"error": "không dò được subnet LAN"})
+            return
+        ok, msg2, hosts = await router_backends.poll(backend_config, lan_subnet)
         if not ok:
             await ipc.broadcast("router_backend_error", {"error": msg2})
             return
@@ -2646,9 +2705,9 @@ async def handle_command(
         )
 
     elif cmd == "detect_gateway_ip_now":
-        gw_ip = await asyncio.to_thread(detect_gateway_ip)
-        await ipc.broadcast("gateway_ip_detected", {"gw_ip": gw_ip})
-        logger.info("detect_gateway_ip_now: %s", gw_ip or "không dò được")
+        detected_gw = await asyncio.to_thread(detect_gateway_ip)
+        await ipc.broadcast("gateway_ip_detected", {"gw_ip": detected_gw})
+        logger.info("detect_gateway_ip_now: %s", detected_gw or "không dò được")
 
     elif cmd == "set_evasion":
         enabled = bool(msg.get("enabled", False))
@@ -3179,7 +3238,9 @@ async def main_async(args: argparse.Namespace) -> None:
         checkpoint_ok, checkpoint_message = store.verify_forensic_checkpoint(checkpoint_path)
         if not checkpoint_ok:
             logger.critical("FORENSIC CHECKPOINT INVALID: %s", checkpoint_message)
-    traffic_manager = TrafficManager(None, interface=own_iface)  # ipc gán ngay dưới
+    # ipc gán ngay dưới, trước khi bất kỳ collector nào chạy: IpcServer cần
+    # traffic_manager trong handler của nó, nên một trong hai phải dựng trước.
+    traffic_manager = TrafficManager(None, interface=own_iface)  # type: ignore[arg-type]
     tarpit_manager = tarpit.TarpitManager()
     helper_socket = os.environ.get("SHIELD_HELPER_SOCK")
     privileged_client = PrivilegedClient(Path(helper_socket)) if helper_socket else None
@@ -3281,8 +3342,8 @@ async def main_async(args: argparse.Namespace) -> None:
         os.environ.get("SHIELD_LOG_INGEST_CERT"), os.environ.get("SHIELD_LOG_INGEST_KEY"),
         os.environ.get("SHIELD_LOG_INGEST_CLIENT_CA"),
     )
-    if any((ingest_cert, ingest_key, ingest_ca)):
-        if not all((ingest_cert, ingest_key, ingest_ca)):
+    if ingest_cert or ingest_key or ingest_ca:
+        if not (ingest_cert and ingest_key and ingest_ca):
             raise RuntimeError(
                 "log ingest cần đủ certificate, private key và client CA — "
                 "chạy scripts/generate-probe-ca.sh init <host>"
@@ -3327,6 +3388,7 @@ async def main_async(args: argparse.Namespace) -> None:
         )
     )
     traffic_manager.ipc = ipc
+    notifier.set_desktop_relay(ipc.send_desktop_notification)
 
     await ipc.start()
     logger.info("Shield agent khởi động. DB: %s | Socket: %s", store.path, ipc.sock_path)
@@ -3377,8 +3439,8 @@ async def main_async(args: argparse.Namespace) -> None:
         os.environ.get("SHIELD_FLEET_SERVER_CERT"), os.environ.get("SHIELD_FLEET_SERVER_KEY"),
         os.environ.get("SHIELD_FLEET_CLIENT_CA"),
     )
-    if any((fleet_cert, fleet_key, fleet_ca)):
-        if not all((fleet_cert, fleet_key, fleet_ca)):
+    if fleet_cert or fleet_key or fleet_ca:
+        if not (fleet_cert and fleet_key and fleet_ca):
             raise RuntimeError("fleet mTLS requires server certificate, private key and client CA")
         listen = os.environ.get("SHIELD_FLEET_LISTEN", "127.0.0.1:9443")
         host, separator, port_raw = listen.rpartition(":")
@@ -3433,6 +3495,7 @@ async def main_async(args: argparse.Namespace) -> None:
     tasks = [
         alert_consumer_task,
         event_consumer_task,
+        evidence_feed_task,
         # Nút "Tắt Shield" trong app đặt cờ này; task duy nhất việc là đánh
         # thức main_async để thoát sạch.
         asyncio.create_task(shutdown_watch_loop()),
@@ -3464,7 +3527,7 @@ async def main_async(args: argparse.Namespace) -> None:
             store, event_bus, alert_bus, ipc, privileged_client, baseline_detector,
             evidence_feed)),
     ]
-    if fleet_server is not None:
+    if fleet_server is not None and fleet_server.server is not None:
         tasks.append(asyncio.create_task(fleet_server.server.serve_forever()))
     if args.inject_fake_events:
         tasks.append(asyncio.create_task(run_fake_injector(alert_bus)))

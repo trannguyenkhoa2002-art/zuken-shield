@@ -14,7 +14,6 @@ import pytest
 from shield.ai.model_config import AI_MODES, ModelConfig, ModelConfigError
 from shield.report.scenarios import (
     EXPLANATION_ELIGIBLE_FAMILIES,
-    SCENARIOS,
     UNKNOWN,
     explanation_allowed,
 )
