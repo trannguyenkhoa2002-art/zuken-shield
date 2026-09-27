@@ -7,8 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] — internal package version `3.0.0a3`
 
+### Added
+
+- **Behavior Risk vs. Evidence Confidence** (phase 1): two scores per alert;
+  declarative evidence models for SSH brute force, port scan, gateway MAC change
+  and ARP conflict list observed and missing evidence.
+- **Gray zone** (phase 2): near-misses, low-confidence and suppressed signals
+  are recorded for the analyst; only a person promotes (audited incident with an
+  `analyst_promoted` reason) or dismisses them.
+- **Raw log lines** (phase 3): journal, auditd, syslog and probe events keep
+  the original line, redacted and capped, next to the normalized event.
+- **Live workspace** (phase 4): up to ten filtered tabs with Live / Pause /
+  Search / Replay, groups discovered from telemetry, entity lifetime history.
+- Each phase passed `scripts/phase_gate.py`: acceptance tests pass on the phase
+  and fail on the commit before it, ruff, mypy, full suite at `ulimit -n 1024`.
+
 ### Fixed
 
+- Journal, syslog and probe stored the verbatim `message` in normalized data
+  without secret redaction.
+- Near-misses could have been counted as detections by replay, assessment and
+  eval runners; they are filtered.
+- Automatic backups are pruned after the new copy is written (pruning first
+  left one extra copy and could remove a good backup early).
 - **Agent killed by the watchdog after the Beta 1.0 "fix".** Two causes, both
   reproduced on a copy of a 2.5 GB production database:
   - the daily backup and the full integrity check ran on the shared SQLite

@@ -51,7 +51,14 @@ against detection rules, and preserves the evidence behind every conclusion.
 - **Guided incident Q&A** — five closed questions about an incident, answered
   deterministically from the report, without loading any model.
 - **Expert Evidence** — a read-only, bounded, audited query surface over the
-  event store for examining what actually happened.
+  event store for examining what actually happened, with the original log line
+  (secrets redacted) next to the normalized event where the source has one.
+- **Risk vs. confidence** — every alert has a Behavior Risk and a separate
+  Evidence Confidence score; modelled rules list the evidence still missing.
+- **Gray zone** — near-misses, low-confidence and suppressed signals are shown
+  to the analyst instead of hidden; only a person promotes or dismisses them.
+- **Live workspace** — up to ten filtered log tabs with Live / Pause / Search /
+  Replay, groups discovered from telemetry, and entity lifetime history.
 - **Response workflow** — six action types behind a policy engine, with
   preconditions, verification against observable system state, and rollback.
 - **Self-monitoring** — a guardian service, a systemd watchdog, a forensic
