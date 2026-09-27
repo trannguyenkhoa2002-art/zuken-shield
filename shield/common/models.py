@@ -176,6 +176,12 @@ class Alert:
     # `alerts`, nên sống qua restart — đã đủ sức diễn đạt điều đó; thứ thiếu
     # chỉ là cách để detector nói ra nhịp của mình.
     dedupe_window_s: float = 0.0
+    # EVIDENCE CONFIDENCE 0..100 — bằng chứng ủng hộ kết luận tới đâu, tách
+    # khỏi `risk_score` (hành vi nguy hiểm tới đâu). -1 = CHƯA ĐÁNH GIÁ (alert
+    # cũ, hoặc chưa qua scoring) — không phải 0, vì 0 là "không có bằng chứng".
+    evidence_confidence: int = -1
+    # {"basis", "observed", "missing", "labels"} — xem security/evidence_model.
+    evidence_assessment: dict = field(default_factory=dict)
 
     @property
     def confidence(self) -> float:
@@ -213,6 +219,8 @@ class Alert:
             policy_action=d.get("policy_action", "alert"),
             alert_id=int(d.get("alert_id", 0) or 0),
             dedupe_window_s=float(d.get("dedupe_window_s", 0.0) or 0.0),
+            evidence_confidence=int(d.get("evidence_confidence", -1)),
+            evidence_assessment=dict(d.get("evidence_assessment") or {}),
         )
 
 

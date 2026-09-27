@@ -53,7 +53,7 @@ GRAPH_PRUNE_MAX_EDGES = 20_000
 # lượt quét quay về đầu bảng mãi mãi.
 GRAPH_PRUNE_CURSOR_KEY = "graph_prune_cursor"
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 CONFIG_SCHEMA_VERSION = 1
 
 
@@ -101,6 +101,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     confidence REAL NOT NULL DEFAULT 0.5,
     policy_action TEXT NOT NULL DEFAULT 'alert',
     count INTEGER NOT NULL DEFAULT 1,
+    evidence_confidence INTEGER NOT NULL DEFAULT -1,
+    evidence_assessment TEXT NOT NULL DEFAULT '{}',
     first_seen REAL NOT NULL DEFAULT 0,
     last_seen REAL NOT NULL DEFAULT 0,
     sources TEXT NOT NULL DEFAULT '[]'
@@ -846,6 +848,11 @@ class Store:
             ("first_seen", "REAL NOT NULL DEFAULT 0"),
             ("last_seen", "REAL NOT NULL DEFAULT 0"),
             ("sources", "TEXT NOT NULL DEFAULT '[]'"),
+            # v11: Evidence Confidence tách khỏi Behavior Risk. -1 trên dòng cũ
+            # = chưa đánh giá; KHÔNG suy ngược từ `confidence`, vì con số đó đo
+            # thứ khác (độ phong phú bằng chứng) và gán lại sẽ là bịa.
+            ("evidence_confidence", "INTEGER NOT NULL DEFAULT -1"),
+            ("evidence_assessment", "TEXT NOT NULL DEFAULT '{}'"),
         ):
             if name not in columns:
                 self.conn.execute(f"ALTER TABLE alerts ADD COLUMN {name} {ddl}")
@@ -1415,10 +1422,14 @@ class Store:
                 # trước đọc được, không phải một con số độc lập có thể lệch.
                 "UPDATE alerts SET count=?,ts=?,last_seen=?,sources=?,evidence=?,"
                 "risk_score=MAX(risk_score,?),confidence=MAX(confidence,?),"
-                "evidence_strength=MAX(evidence_strength,?) WHERE id=?",
+                "evidence_strength=MAX(evidence_strength,?),"
+                # Confidence lấy lần đánh giá MỚI NHẤT, không MAX: nó phản ánh
+                # những gì DB biết lúc này, và một lượt sau có thể biết nhiều hơn.
+                "evidence_confidence=?,evidence_assessment=? WHERE id=?",
                 (count + 1, alert.ts, alert.ts, json.dumps(sorted(sources)),
                  json.dumps(alert.evidence), alert.risk_score,
-                 alert.evidence_strength, alert.evidence_strength, alert_id),
+                 alert.evidence_strength, alert.evidence_strength,
+                 alert.evidence_confidence, json.dumps(alert.evidence_assessment), alert_id),
             )
             self.conn.commit()
             # Mang theo khoá chính của dòng đã có. Không có bước này thì bên
@@ -1427,8 +1438,9 @@ class Store:
 
         self.conn.execute(
             "INSERT INTO alerts (ts, rule_id, severity, title, detail, subject, evidence, playbook, "
-            "risk_score,confidence,evidence_strength,policy_action,first_seen,last_seen,sources) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "risk_score,confidence,evidence_strength,policy_action,first_seen,last_seen,sources,"
+            "evidence_confidence,evidence_assessment) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 alert.ts,
                 alert.rule_id,
@@ -1445,6 +1457,8 @@ class Store:
                 alert.ts,
                 alert.ts,
                 json.dumps([source]),
+                alert.evidence_confidence,
+                json.dumps(alert.evidence_assessment),
             ),
         )
         # `last_insert_rowid()` thay cho `cursor.lastrowid`: kết nối ở đây đi qua
@@ -1459,12 +1473,15 @@ class Store:
 
         rows = self.conn.execute(
             "SELECT ts, rule_id, severity, title, detail, subject, evidence, playbook, count, "
-            "risk_score,confidence,policy_action,first_seen,last_seen,sources "
+            "risk_score,confidence,policy_action,first_seen,last_seen,sources,"
+            "evidence_confidence,evidence_assessment "
             "FROM alerts ORDER BY ts DESC LIMIT ?",
             (limit,),
         ).fetchall()
         out = []
-        for ts, rule_id, severity, title, detail, subject, evidence, playbook, count, risk_score, confidence, policy_action, first_seen, last_seen, sources in rows:
+        for (ts, rule_id, severity, title, detail, subject, evidence, playbook, count, risk_score,
+             confidence, policy_action, first_seen, last_seen, sources, evidence_confidence,
+             evidence_assessment) in rows:
             out.append(
                 {
                     "ts": ts,
@@ -1482,6 +1499,8 @@ class Store:
                     "first_seen": first_seen,
                     "last_seen": last_seen,
                     "source_count": len(json.loads(sources or "[]")),
+                    "evidence_confidence": int(evidence_confidence),
+                    "evidence_assessment": json.loads(evidence_assessment or "{}"),
                 }
             )
         return out
@@ -1872,6 +1891,67 @@ class Store:
     def is_trusted(self, mac: str) -> bool:
         row = self.conn.execute("SELECT 1 FROM trusted WHERE mac=?", (mac,)).fetchone()
         return row is not None
+
+    # Cửa sổ nhìn lại cho fact lịch sử, và trần số dòng mỗi truy vấn: fact là
+    # "đã thấy hay chưa", không cần quét cả bảng để trả lời.
+    EVIDENCE_LOOKBACK_S = 3600.0
+    EVIDENCE_NEARBY_S = 600.0
+    EVIDENCE_ROW_LIMIT = 2000
+
+    def evidence_facts(self, alert: Alert) -> set[str]:
+        """Fact lịch sử cho mô hình Evidence Confidence (security/evidence_model).
+
+        Chỉ đọc, có cửa sổ thời gian và trần dòng, đi qua index (source, ts) /
+        (subject, rule_id). Một fact CHƯA THẤY không có nghĩa là "không xảy
+        ra" — nó hiện trong danh sách còn thiếu, đúng như vậy.
+        """
+        from shield.agent.detectors.mitm import BASELINE_GW_IP
+
+        facts: set[str] = set()
+        ev = alert.evidence or {}
+        since = alert.ts - self.EVIDENCE_LOOKBACK_S
+        source_ip = str(ev.get("src_ip") or "")
+
+        def journal_rows(kind: str) -> list[dict]:
+            rows = self.conn.execute(
+                "SELECT data FROM events WHERE source='journal' AND ts>=? AND kind=? "
+                "ORDER BY ts DESC LIMIT ?", (since, kind, self.EVIDENCE_ROW_LIMIT)).fetchall()
+            out = []
+            for (raw,) in rows:
+                try:
+                    data = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(data, dict):
+                    out.append(data)
+            return out
+
+        if alert.rule_id == "LOCAL_SSH_BRUTEFORCE" and source_ip:
+            logins = [d for d in journal_rows("ssh_login") if d.get("src_ip") == source_ip]
+            if logins:
+                facts.add("login_succeeded_from_source")
+            if any(d.get("user") == "root" for d in logins):
+                facts.add("privileged_session_from_source")
+        elif alert.rule_id == "SCAN_PORTSCAN" and source_ip:
+            if any(d.get("src_ip") == source_ip for d in journal_rows("ssh_failed_password")):
+                facts.add("followed_by_auth_attempts")
+        elif alert.rule_id in ("MITM_GATEWAY_MAC_CHANGED", "MITM_ARP_CONFLICT"):
+            observed = str(ev.get("observed_mac") or "").lower()
+            gateway = self.get_baseline(BASELINE_GW_IP)
+            if observed:
+                row = self.conn.execute(
+                    "SELECT ip FROM devices WHERE mac=?", (observed,)).fetchone()
+                if row and row[0] and row[0] != (gateway or ev.get("gateway_ip")):
+                    facts.add("mac_belongs_to_other_host")
+            if gateway and alert.subject == gateway:
+                facts.add("gateway_involved")
+            nearby = self.conn.execute(
+                "SELECT 1 FROM alerts WHERE rule_id IN ('DNS_RESOLVER_CHANGED','DNS_UNEXPECTED_SERVER') "
+                "AND ts BETWEEN ? AND ? LIMIT 1",
+                (alert.ts - self.EVIDENCE_NEARBY_S, alert.ts + self.EVIDENCE_NEARBY_S)).fetchone()
+            if nearby:
+                facts.add("dns_changed_nearby")
+        return facts
 
     def risk_context(self, subject: str) -> dict:
         """Ngữ cảnh ngoài alert dùng để chấm điểm rủi ro (KE-HOACH-SHIELD-1.1

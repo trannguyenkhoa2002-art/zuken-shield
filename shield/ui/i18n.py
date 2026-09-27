@@ -32,6 +32,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "severity.warning": ("Cảnh báo", "Warning"),
     "severity.critical": ("Nguy cấp", "Critical"),
     "alerts.col_risk": ("Điểm rủi ro", "Risk score"),
+    "alerts.col_confidence": ("Độ tin cậy bằng chứng", "Evidence confidence"),
     "status.ok": ("Bình thường", "Normal"),
     "status.watching": ("Đang theo dõi", "Watching"),
     "status.alert": ("Có cảnh báo", "Alert active"),

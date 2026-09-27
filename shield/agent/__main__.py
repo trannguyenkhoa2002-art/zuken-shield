@@ -329,7 +329,10 @@ async def run_alert_consumer(alert_bus: Bus, store: Store, ipc: IpcServer,
         context = RiskContext.from_dict(
             await asyncio.to_thread(store.risk_context, alert.subject)
         )
-        assessment = scorer.assess(alert, context)
+        # Fact lịch sử cho Evidence Confidence (đăng nhập thành công sau brute
+        # force, DNS đổi gần lúc MITM...). Cùng lý do đọc trong thread.
+        store_facts = await asyncio.to_thread(store.evidence_facts, alert)
+        assessment = scorer.assess(alert, context, store_facts)
         decision = policy.decide(alert.rule_id, assessment.score)
         # Phase 0 (mục 0.3): policy sinh ĐỀ XUẤT, chưa thực thi. Proposal có ID
         # riêng, TTL, evidence và luôn requires_human=True — không có đường nào
@@ -352,6 +355,8 @@ async def run_alert_consumer(alert_bus: Bus, store: Store, ipc: IpcServer,
             evidence=evidence,
             risk_score=assessment.score,
             evidence_strength=assessment.evidence_strength,
+            evidence_confidence=assessment.evidence_confidence.score,
+            evidence_assessment=assessment.evidence_confidence.to_dict(),
             policy_action="suppressed" if suppression else decision.action,
         )
         is_assessment = bool(alert.evidence.get("assessment_id"))

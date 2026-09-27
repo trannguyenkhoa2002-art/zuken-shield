@@ -57,6 +57,7 @@ from shield.agent.store import Store
 from shield.assessment.exporters import coverage as assessment_coverage
 from shield.security.investigations import build_process_graph
 from shield.security.diagnostics import export_diagnostic_bundle
+from shield.security.evidence_model import confidence_cell, describe as describe_evidence
 from shield import __creator__, __display_version__, __version__
 from shield.ui import theme
 from shield.ui.client import SocketClient
@@ -941,14 +942,15 @@ class AlertsTab(QWidget, I18nMixin):
         actions_row.addStretch()
         layout.addLayout(actions_row)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.bind(
             lambda: self.table.setHorizontalHeaderLabels(
                 [t("alerts.col_time"), t("alerts.col_severity"), t("alerts.col_title"),
-                 t("alerts.col_risk"), t("alerts.col_detail"), t("alerts.col_subject")]
+                 t("alerts.col_risk"), t("alerts.col_confidence"), t("alerts.col_detail"),
+                 t("alerts.col_subject")]
             )
         )
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setItemDelegate(SeverityStripeDelegate(color_col=0, parent=self.table))
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
@@ -965,8 +967,13 @@ class AlertsTab(QWidget, I18nMixin):
     def _on_row_double_clicked(self, row: int, _col: int) -> None:
         item = self.table.item(row, 0)
         alert = item.data(Qt.ItemDataRole.UserRole) if item else None
-        if not alert or not alert.get("playbook"):
-            QMessageBox.information(self, t("playbook.title"), t("alerts.no_playbook"))
+        if not alert:
+            return
+        if not alert.get("playbook"):
+            # Không có hành động gợi ý vẫn phải xem được Risk / Confidence và
+            # bằng chứng còn thiếu — đó là thứ người phân tích cần nhất.
+            QMessageBox.information(self, t("playbook.title"),
+                                    f"{describe_evidence(alert, current_lang())}\n\n{t('alerts.no_playbook')}")
             return
         self._show_playbook_dialog(alert)
 
@@ -976,7 +983,8 @@ class AlertsTab(QWidget, I18nMixin):
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
         layout = QVBoxLayout(dialog)
-        subject_label = QLabel(f"{t('alerts.col_subject')}: {subject}\n\n{detail}")
+        subject_label = QLabel(f"{t('alerts.col_subject')}: {subject}\n\n{detail}\n\n"
+                               f"{describe_evidence(alert, current_lang())}")
         subject_label.setWordWrap(True)
         subject_label.setMinimumWidth(420)
         layout.addWidget(subject_label)
@@ -1067,6 +1075,7 @@ class AlertsTab(QWidget, I18nMixin):
             t(f"severity.{severity}") if severity in ("info", "warning", "critical") else severity,
             title,
             f"{int(alert.get('risk_score', 0))}/100",
+            confidence_cell(alert),
             detail,
             alert["subject"],
         ]
@@ -1095,7 +1104,7 @@ class AlertsTab(QWidget, I18nMixin):
             if alert is None:
                 continue
             title, detail = alert_text(alert)
-            title_item, detail_item = self.table.item(row, 2), self.table.item(row, 4)
+            title_item, detail_item = self.table.item(row, 2), self.table.item(row, 5)
             if title_item is not None:
                 title_item.setText(title)
             if detail_item is not None:

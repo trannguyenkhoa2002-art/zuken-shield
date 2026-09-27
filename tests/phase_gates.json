@@ -1,0 +1,10 @@
+{
+  "note": "Mỗi giai đoạn chỉ PASS qua scripts/phase_gate.py: test nghiệm thu pass trên HEAD, FAIL trên `base`, ruff/mypy sạch, full suite xanh ở ulimit -n 1024.",
+  "phases": {
+    "1": {
+      "title": "Behavior Risk và Evidence Confidence tách đôi, có danh sách bằng chứng còn thiếu",
+      "base": "a4f9efe",
+      "acceptance_tests": ["tests/test_phase1_dual_scoring.py"]
+    }
+  }
+}
