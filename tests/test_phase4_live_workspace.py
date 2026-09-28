@@ -18,6 +18,7 @@ Tiêu chí nghiệm thu:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
@@ -347,6 +348,9 @@ def test_recent_events_are_found_even_when_graph_refs_point_only_at_expired_ones
                    raw="arp-scan: 192.0.2.10 aa:bb:cc:00:11:22")
     store.insert_event(recent)
     store.graph_ingest_event(recent)
+    # Mô phỏng cạnh do BẢN CŨ ghi: chỉ giữ tham chiếu đầu tiên (đã hết hạn).
+    store.conn.execute("UPDATE graph_edges SET evidence_refs=?", (json.dumps([f"event:{e}" for e in early[:32]]),))
+    store.conn.commit()
     history = EvidenceQueries(store.conn).entity_history("mac", "AA:BB:CC:00:11:22")
     assert [e["event_id"] for e in history["events"]] == [recent.event_id]
     assert history["summary"]["from_recent_scan"] == 1 and history["summary"]["from_graph"] == 0

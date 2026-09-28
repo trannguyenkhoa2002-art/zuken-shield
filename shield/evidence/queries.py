@@ -374,9 +374,10 @@ class EvidenceQueries:
                     seen_ids.add(event["event_id"])
                     events.append(event)
             from_graph = len(events)
-            # Graph giữ tối đa MAX_EVIDENCE_REFS_PER_EDGE tham chiếu ĐẦU TIÊN mỗi
-            # cạnh; khi các event cũ đó đã hết hạn lưu trữ, graph không còn trỏ
-            # tới event nào gần đây. Đo trên DB thật: một MAC 6.524 lần quan sát
+            # Graph giữ tối đa MAX_EVIDENCE_REFS_PER_EDGE tham chiếu mỗi cạnh
+            # (neo đầu + mới nhất). Cạnh ghi bằng bản cũ chỉ giữ tham chiếu ĐẦU
+            # TIÊN; khi các event đó hết hạn, graph không còn trỏ tới event nào
+            # gần đây. Đo trên DB thật: một MAC 6.524 lần quan sát
             # trả về 0 event chỉ qua graph. Nên quét thêm cửa sổ gần nhất theo
             # đúng các trường mang thực thể này — có index `ts`, LIMIT, deadline.
             self._check_deadline(deadline)

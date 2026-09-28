@@ -98,6 +98,21 @@ CREATE INDEX IF NOT EXISTS idx_evidence_ts ON evidence_objects(ts);
 # Giới hạn cứng cho mọi câu đọc. Mục 1.4: "Mỗi query phải có hard limit."
 MAX_LIMIT = 500
 MAX_EVIDENCE_REFS_PER_EDGE = 32
+# Trong 32 chỗ: giữ `ANCHOR` tham chiếu ĐẦU TIÊN (cạnh này bắt đầu từ đâu), phần
+# còn lại là tham chiếu MỚI NHẤT. Trước đây giữ 32 cái đầu tiên và bỏ mọi cái
+# sau: khi lưu trữ xoá các event cũ đó, cạnh không còn trỏ tới event nào —
+# trên DB thật một MAC 6.524 lần quan sát trả về 0 event, và ~90 % cạnh thành
+# mồ côi dù hành vi vẫn đang tiếp diễn.
+EVIDENCE_REFS_ANCHOR = 8
+
+
+def bounded_refs(refs) -> list:
+    """Khử trùng giữ thứ tự, rồi giữ neo đầu + phần mới nhất trong trần."""
+    unique = list(dict.fromkeys(refs))
+    if len(unique) <= MAX_EVIDENCE_REFS_PER_EDGE:
+        return unique
+    newest = MAX_EVIDENCE_REFS_PER_EDGE - EVIDENCE_REFS_ANCHOR
+    return unique[:EVIDENCE_REFS_ANCHOR] + unique[-newest:]
 
 
 class EvidenceGraph:
@@ -173,7 +188,7 @@ class EvidenceGraph:
                 "evidence_kind,trust,derived_by,first_seen,last_seen,confidence,"
                 "observation_count,attributes) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?)",
                 (edge.edge_id, edge.src_id, edge.relation, edge.dst_id,
-                 json.dumps(list(edge.evidence_refs[:MAX_EVIDENCE_REFS_PER_EDGE])),
+                 json.dumps(bounded_refs(edge.evidence_refs)),
                  edge.evidence_kind, edge.trust, edge.derived_by,
                  edge.first_seen or time.time(), edge.last_seen or time.time(),
                  edge.confidence, json.dumps(edge.attributes, sort_keys=True, default=str)),
@@ -181,12 +196,13 @@ class EvidenceGraph:
             return edge.edge_id
 
         existing_refs = json.loads(row[0])
-        merged = list(dict.fromkeys([*existing_refs, *edge.evidence_refs]))[:MAX_EVIDENCE_REFS_PER_EDGE]
+        merged = bounded_refs([*existing_refs, *edge.evidence_refs])
+        added = len(set(merged) - set(existing_refs))
         # Cạnh được nhiều bằng chứng độc lập chống lưng thì đáng tin hơn — nhưng
         # trần là 1.0 và mức tăng nhỏ dần, để "quan sát nhiều lần" không biến
         # thành "chắc chắn". Lặp lại một quan sát không phải là một bằng chứng
         # mới; nó chỉ là cùng một bằng chứng nói lại.
-        confidence = min(1.0, max(row[2], edge.confidence) + 0.01 * (len(merged) - len(existing_refs)))
+        confidence = min(1.0, max(row[2], edge.confidence) + 0.01 * added)
         kind = row[3] if EvidenceKind.RANK.get(row[3], 0) >= EvidenceKind.RANK.get(edge.evidence_kind, 0) else edge.evidence_kind
         self.conn.execute(
             "UPDATE graph_edges SET evidence_refs=?,trust=?,confidence=?,evidence_kind=?,"
