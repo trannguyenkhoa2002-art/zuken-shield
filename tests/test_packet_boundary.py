@@ -79,6 +79,23 @@ def test_the_helper_package_declares_its_own_dependency():
     assert "scapy" in text
     control = (ROOT / "packaging/packet-collector/control").read_text(encoding="utf-8")
     assert "python3-scapy" in control
+    assert "python3-venv" in control
+    assert "python3-setuptools" in control
+
+
+def test_shared_runtime_directory_permissions_agree():
+    import configparser
+
+    units = []
+    for name in ("shield-agent", "shield-packet-collector"):
+        unit = configparser.ConfigParser(strict=False, interpolation=None)
+        unit.read(ROOT / "systemd" / f"{name}.service")
+        units.append(unit["Service"])
+    for key in ("Group", "RuntimeDirectory", "RuntimeDirectoryMode", "RuntimeDirectoryPreserve"):
+        assert units[0][key] == units[1][key], key
+    build = (ROOT / "packaging/build-packet-collector-deb.sh").read_text()
+    assert "groupadd --system shield" in build
+    assert "AF_NETLINK" in units[1]["RestrictAddressFamilies"].split()
 
 
 # --- §11 tương thích sự kiện --------------------------------------------
@@ -140,7 +157,6 @@ def test_malformed_helper_output_is_dropped(raw):
     {"known": ["a"] * 100}, {"ip": {"nested": "object"}},
 ])
 def test_hostile_payload_values_are_rejected(payload):
-    from packet_helper.protocol import envelope
 
     from shield.agent.collectors.packet_ingest import parse_line
 

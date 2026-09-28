@@ -120,7 +120,7 @@ def infer_device_profile(signals: dict) -> DeviceProfile:
         add("NAS", "file_services", sorted({445, 2049} & ports), 25,
             "Network file-sharing service was observed")
 
-    winner = max(scores, key=scores.get)
+    winner = max(scores, key=lambda name: scores[name])
     score = scores[winner]
     if score < 20:
         return DeviceProfile("Unknown", "Unknown device", 0.2, ())

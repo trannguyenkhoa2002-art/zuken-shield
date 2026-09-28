@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 # Runtime được hỗ trợ. Danh sách ĐÓNG — tên lạ là lỗi cấu hình, không phải một
@@ -164,7 +165,7 @@ class ModelConfig:
         return resolved
 
 
-def from_environment(env: dict | None = None) -> ModelConfig | None:
+def from_environment(env: Mapping[str, str] | None = None) -> ModelConfig | None:
     """Đọc cấu hình từ môi trường. `None` nghĩa là KHÔNG bật model cục bộ.
 
     `None` chứ không phải một cấu hình mặc định: mặc định production là

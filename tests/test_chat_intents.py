@@ -19,7 +19,7 @@ from shield.ai.chat_answer import deterministic_answer, needs_model
 from shield.ai.chat_intents import (CERTAINTY, CHAT_INTENTS, DETERMINISTIC,
                                     EVIDENCE_EXPLANATION, INCIDENT_SUMMARY,
                                     MODEL_BACKED, NEXT_INVESTIGATION_STEP,
-                                    OUT_OF_SCOPE_CHAT, RELATED_PROCESS, intent_of)
+                                    OUT_OF_SCOPE_CHAT, RELATED_PROCESS)
 from shield.ai.chat_router import quick_intents, route
 from shield.common.models import Alert
 from shield.ai.worker.prompt import intent_task

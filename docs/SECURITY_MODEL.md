@@ -12,8 +12,15 @@ refuses to do.
 | `shield` (interface) | your user | reads and displays; holds no privilege of its own |
 | AI worker | unprivileged, isolated | dormant in Beta 1.0; see below |
 
-The agent is confined by its systemd unit: `MemoryMax=1G`, `TasksMax=512`, and a
-restricted capability set.
+The agent is confined by its systemd unit: `MemoryMax=1G`, `TasksMax=512`,
+`NoNewPrivileges`, `ProtectSystem=full`, `RestrictSUIDSGID` and an address-family
+allowlist. It keeps root's capabilities: no `CapabilityBoundingSet` is applied
+to the agent yet. The restricted capability set (`CAP_NET_RAW`,
+`CAP_NET_ADMIN`) applies to the optional packet collector.
+
+Desktop notifications do not cross a privilege boundary. The agent publishes
+redacted text on its IPC socket to clients that subscribe; `shield-notify`, a
+systemd user service running in the desktop session as the user, displays it.
 
 ## Boundaries
 

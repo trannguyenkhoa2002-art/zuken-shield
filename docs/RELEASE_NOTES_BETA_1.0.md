@@ -56,7 +56,7 @@ over, on real incidents:
   than a fabricated number.
 
 Both failure modes were unacceptable, so all five guided Q&A intents are
-deterministic. They answer in roughly a millisecond, render identifiers verbatim
+deterministic. They answer without a model, render identifiers verbatim
 from the database, and cannot mislabel an incident because the scenario name
 comes from the registry.
 
@@ -87,6 +87,13 @@ Verified by 16 clean service starts with `NRestarts=0` and no watchdog kills,
 then a real cold reboot: `shield-agent` active, `Result=success`, `NRestarts=0`,
 and a current-boot watchdog-timeout count of zero.
 
+> **Correction, 2026-09-27.** The logs behind that verification are not kept in
+> this repository, and the fix did not hold. The developer's journal shows 41
+> watchdog timeouts after this release, and the agent reached `failed` on
+> 2026-09-27. The root causes — backup and integrity check holding the shared
+> database lock, and `Type=simple` counting slow cold starts against the
+> watchdog — are fixed in the next release; see `../CHANGELOG.md`.
+
 ## Other changes in this release
 
 - **Interface migrated from PyQt6 to PySide6.** PyQt6 is offered only under
@@ -106,7 +113,9 @@ and a current-boot watchdog-timeout count of zero.
 
 ## Verification
 
-At release:
+At release (the logs for these figures are not included in this repository;
+the model-evaluation percentages above likewise come from internal runs whose
+raw outputs are not published):
 
 - 2260 tests collected; 2225 passing unprivileged; 35 requiring root and skipped
 - Live acceptance on the developer's own machine against real production
@@ -125,9 +134,8 @@ The full list is in `../README.md`. The ones most likely to matter:
   reduced, and Shield reports the reduction rather than hiding it.
 - Detection thresholds were tuned against one real environment.
 - Response actions beyond `block_ip` have had limited real-world exercise.
-- The startup watchdog defect described above is fixed and verified, but the
-  verification is repeated starts and one real cold boot — not long-duration
-  soak testing.
+- The startup watchdog defect described above was not fully fixed in this
+  release; see the correction above.
 
 ## Licensing
 

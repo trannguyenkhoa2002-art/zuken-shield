@@ -187,10 +187,10 @@ class SyslogCollector:
     ) -> None:
         self.event_bus = event_bus
         self.host = host or os.environ.get("SHIELD_SYSLOG_BIND", DEFAULT_BIND_HOST)
-        self.port = int(port or os.environ.get("SHIELD_SYSLOG_PORT", DEFAULT_SYSLOG_PORT))
+        self.port = int(port or os.environ.get("SHIELD_SYSLOG_PORT") or DEFAULT_SYSLOG_PORT)
         self.networks = allowed_sources(allowlist)
         self.limiter = RateLimiter(int(
-            rate_per_s or os.environ.get("SHIELD_SYSLOG_RATE_PER_SOURCE", DEFAULT_RATE_PER_SOURCE)
+            rate_per_s or os.environ.get("SHIELD_SYSLOG_RATE_PER_SOURCE") or DEFAULT_RATE_PER_SOURCE
         ))
         self.store = store
         self.accepted = 0
@@ -198,8 +198,8 @@ class SyslogCollector:
         self.rejected_rate = 0
         self.rejected_parse = 0
         self.rejected_size = 0
-        self._udp = None
-        self._tcp = None
+        self._udp: asyncio.DatagramTransport | None = None
+        self._tcp: asyncio.Server | None = None
 
     # --- xử lý một dòng ---------------------------------------------------
     async def handle_payload(self, payload: bytes, address: str) -> bool:

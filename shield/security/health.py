@@ -9,7 +9,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable
+from typing import Any, Callable, Coroutine
 
 from shield.common.models import Alert, now
 
@@ -288,7 +288,7 @@ class CollectorSupervisor:
         self.restart_backoff_s = max(0.0, restart_backoff_s)
 
     async def run(
-        self, name: str, backend: str, factory: Callable[[], Awaitable[None]],
+        self, name: str, backend: str, factory: Callable[[], Coroutine[Any, Any, None]],
     ) -> None:
         crashes: deque[float] = deque()
         restart_count = 0

@@ -22,13 +22,11 @@ from shield.evals.report_quality import (
 )
 from shield.report.scenarios import (
     BY_CODE,
-    BY_RULE,
     FAMILIES,
     SCENARIOS,
     UNKNOWN,
     UNSUPPORTED_FAMILIES,
     coverage,
-    for_rule,
 )
 from shield.report.template import (
     AI_SLOTS,

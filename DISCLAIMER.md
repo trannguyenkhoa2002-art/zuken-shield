@@ -42,6 +42,9 @@ enabling anything beyond alerting.
 
 ## Your data
 
-Everything Shield collects stays on the machine. Nothing is uploaded. That also
-means the evidence database is yours to protect: it contains detailed activity
+Everything Shield collects stays on the machine by default. The one exception
+is optional Telegram notifications: if an administrator configures them, the
+text of alerts (after secret redaction) is sent to Telegram. The database,
+packet captures and snapshots are never uploaded. See `docs/PRIVACY.md`. That
+also means the evidence database is yours to protect: it contains detailed activity
 about the host and the local network, and it should be treated as sensitive.

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -50,7 +51,7 @@ def diagnostic_payload(store) -> dict:
         "platform": {
             "os_release": Path("/etc/os-release").read_text(errors="replace")[:16_000]
             if Path("/etc/os-release").exists() else "unavailable",
-            "python": os.sys.version,
+            "python": sys.version,
         },
         "services": {
             "shield-agent": _command(["systemctl", "show", "shield-agent.service", "--no-pager",

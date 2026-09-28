@@ -15,12 +15,14 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import sqlite3
 import secrets
 import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 from shield.common import sdnotify
 from shield.common.models import Alert, Event
@@ -1046,7 +1048,25 @@ class Store:
             "restored_from_backup": str(restored_from) if restored_from else None,
         }
 
-    def check_integrity(self, *, quick: bool = False) -> tuple[bool, str]:
+    def _side_connection(self) -> sqlite3.Connection:
+        """Một kết nối CHỈ ĐỌC, riêng, không đi qua `_ThreadSafeConnection`.
+
+        Dành cho việc đọc toàn bộ file (integrity_check, backup). Chạy chúng
+        trên `self.conn` nghĩa là giữ khoá chung suốt thời gian đọc — và lời
+        ping watchdog phải chờ đúng khoá đó. Đo trên database 2,5 GB của máy
+        thật: integrity_check giữ khoá 18,6 giây với cache nóng; backup dưới
+        `MemoryMax=1G` còn lâu hơn nhiều. Đó là nguyên nhân các lần SIGABRT
+        lặp lại sau bản sửa watchdog lúc khởi động (tháng 9/2026): agent khởi
+        động xong, lượt bảo trì đầu tiên chạy backup hằng ngày, watchdog giết,
+        khởi động lại, backup vẫn tới hạn — lặp tới khi systemd bỏ cuộc.
+
+        Database ở chế độ WAL nên một kết nối đọc riêng thấy một ảnh chụp nhất
+        quán mà không chặn ghi của agent.
+        """
+        return sqlite3.connect(f"file:{self.path}?mode=ro", uri=True, timeout=30)
+
+    def check_integrity(self, *, quick: bool = False,
+                        separate_connection: bool = False) -> tuple[bool, str]:
         """Database này còn đọc được không. KHÔNG BAO GIỜ ném ra ngoài.
 
         `UnicodeDecodeError` nằm trong danh sách bắt vì một lý do rất cụ thể:
@@ -1055,14 +1075,25 @@ class Store:
         `DatabaseError`, nên nó thoát ra ngoài và giết agent ngay ở dòng kiểm
         tra — tức là cơ chế phát hiện hỏng hóc tự sập vì đúng thứ nó sinh ra để
         phát hiện, và đường phục hồi không bao giờ chạy.
+
+        `separate_connection=True` chạy phép kiểm trên `_side_connection()` để
+        không giữ khoá chung; vòng bảo trì dùng cách này.
         """
         pragma = "quick_check(1)" if quick else "integrity_check"
+        side = None
         try:
-            rows = [str(row[0]) for row in self.conn.execute(f"PRAGMA {pragma}").fetchall()]
+            if separate_connection:
+                side = self._side_connection()
+                rows = [str(row[0]) for row in side.execute(f"PRAGMA {pragma}").fetchall()]
+            else:
+                rows = [str(row[0]) for row in self.conn.execute(f"PRAGMA {pragma}").fetchall()]
         except sqlite3.DatabaseError as exc:
             return False, str(exc)
         except (UnicodeDecodeError, ValueError) as exc:
             return False, f"kết quả kiểm tra không đọc được (database hỏng nặng): {exc}"
+        finally:
+            if side is not None:
+                side.close()
         ok = rows == ["ok"]
         return ok, "ok" if ok else "; ".join(rows[:10])
 
@@ -1132,14 +1163,69 @@ class Store:
             raise ValueError("backup temporary path must not be a symlink")
         if temp.exists():
             temp.unlink()
+        # Nguồn là kết nối đọc RIÊNG, không phải `self.conn`: sao chép vài GB
+        # trong lúc giữ khoá chung làm watchdog giết agent (xem
+        # `_side_connection`). Một bước duy nhất (`pages=-1`) giữ một giao
+        # dịch đọc suốt lượt chép nên bản sao nhất quán; WAL cho agent ghi
+        # tiếp trong lúc đó. Chép theo nhiều bước nhỏ thì mỗi lần agent ghi
+        # sẽ làm SQLite chép lại từ đầu, và với nhịp ghi liên tục thì không
+        # bao giờ xong.
+        source = self._side_connection()
         backup_conn = sqlite3.connect(temp)
         try:
-            self.conn.backup(backup_conn)
+            source.backup(backup_conn)
         finally:
             backup_conn.close()
+            source.close()
         os.chmod(temp, 0o600)
         os.replace(temp, destination)
         return destination
+
+    def prune_backups(self, keep: int = 3) -> dict:
+        """Giữ `keep` bản mới nhất của mỗi loại sao lưu tự động; xoá file tạm bỏ dở.
+
+        Trước đây không có gì xoá sao lưu: máy thật tích 85 GB trong
+        `backups/` (mỗi bản ~2,5 GB, một bản mỗi ngày cộng một bản mỗi lần
+        cài gói). File `.tmp` còn lại là dấu vết một lượt sao lưu bị giết giữa
+        chừng — agent là tiến trình duy nhất tạo sao lưu hằng ngày và không
+        chạy song song với chính nó, nên lúc gọi hàm này không lượt nào đang
+        ghi vào chúng.
+
+        CHỈ đụng tới đúng hai mẫu tên do Shield tạo: `shield-<ts>.db` (hằng
+        ngày) và `shield-pre-upgrade-<ts>.db` (preinst). Sao lưu trước
+        migration schema (`shield-pre-migration-*`) và mọi file khác được giữ
+        nguyên: chúng hiếm, và là đường lui duy nhất của một lần đổi schema.
+        """
+        directory = self.path.parent / "backups"
+        keep = max(1, int(keep))
+        result = {"deleted": 0, "freed_bytes": 0, "temporary_deleted": 0}
+        if not directory.is_dir():
+            return result
+        families: dict[str, list[tuple[int, Path]]] = {"daily": [], "pre-upgrade": []}
+        daily = re.compile(r"^shield-(\d+)\.db$")
+        pre_upgrade = re.compile(r"^shield-pre-upgrade-(\d+)\.db$")
+        temporary = re.compile(r"^shield-(?:pre-upgrade-)?\d+\.db\.tmp(?:-journal)?$")
+        for entry in directory.iterdir():
+            if entry.is_symlink() or not entry.is_file():
+                continue
+            if temporary.match(entry.name):
+                size = entry.stat().st_size
+                entry.unlink()
+                result["temporary_deleted"] += 1
+                result["freed_bytes"] += size
+                continue
+            for family, pattern in (("daily", daily), ("pre-upgrade", pre_upgrade)):
+                match = pattern.match(entry.name)
+                if match:
+                    families[family].append((int(match.group(1)), entry))
+        for entries in families.values():
+            entries.sort(reverse=True)
+            for _ts, entry in entries[keep:]:
+                size = entry.stat().st_size
+                entry.unlink()
+                result["deleted"] += 1
+                result["freed_bytes"] += size
+        return result
 
     def database_stats(self) -> dict:
         page_count = int(self.conn.execute("PRAGMA page_count").fetchone()[0])
@@ -2119,7 +2205,7 @@ class Store:
     def maintain(
         self, event_days: int = 30, alert_days: int = 90,
         snapshot_days: int = 30, database_max_bytes: int = 0,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         """Bound DB growth; forensic ledger is deliberately never pruned here.
 
         `database_max_bytes` là trần THẬT SỰ được thi hành. Trước đây tham số
@@ -2147,6 +2233,7 @@ class Store:
             intel = self.conn.execute("DELETE FROM threat_intel_cache WHERE expires_ts <= ?", (now_ts,)).rowcount
         self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
         trimmed = 0
+        self._size_cap_graph_pruned: dict = {}
         if database_max_bytes > 0:
             trimmed = self._enforce_size_cap(int(database_max_bytes))
             events += trimmed
@@ -2158,7 +2245,10 @@ class Store:
         # tệ hơn dung lượng: nó sẽ đầy những cạnh trỏ tới event đã bị xoá, tức
         # những khẳng định không ai kiểm chứng lại được nữa.
         graph_pruned = {"edges_removed": 0, "entities_removed": 0, "evidence_removed": 0}
-        if events or trimmed:
+        # `database_used_bytes() > cap` sau khi cắt: `_enforce_size_cap` đã
+        # chọn dọn graph thay vì xoá event, và vẫn còn phải dọn tiếp.
+        over_cap = database_max_bytes > 0 and self.database_used_bytes() > int(database_max_bytes)
+        if events or trimmed or over_cap:
             graph_pruned = self._prune_graph_slice(
                 older_than_ts=now_ts - alert_days * 86400)
         # Vết model và hồ sơ điều tra có hạn RIÊNG (mục 7): vết nhiều và nhanh
@@ -2184,9 +2274,14 @@ class Store:
             "events_deleted": events, "alerts_deleted": alerts,
             "snapshots_deleted": snapshots, "intel_deleted": intel,
             "events_trimmed_for_size": trimmed,
-            "graph_edges_deleted": graph_pruned["edges_removed"],
-            "graph_edges_scanned": graph_pruned.get("edges_scanned", 0),
-            "graph_entities_deleted": graph_pruned["entities_removed"],
+            # Cộng cả lát graph mà `_enforce_size_cap` đã dọn thay cho việc
+            # xoá event — thiếu phần đó thì báo cáo sức khoẻ thấp hơn thực tế.
+            "graph_edges_deleted": graph_pruned["edges_removed"]
+            + self._size_cap_graph_pruned.get("edges_removed", 0),
+            "graph_edges_scanned": graph_pruned.get("edges_scanned", 0)
+            + self._size_cap_graph_pruned.get("edges_scanned", 0),
+            "graph_entities_deleted": graph_pruned["entities_removed"]
+            + self._size_cap_graph_pruned.get("entities_removed", 0),
             "ai_traces_deleted": ai_pruned["traces_removed"],
             "investigations_deleted": ai_pruned["investigations_removed"],
             "more_work": more_work,
@@ -2234,6 +2329,25 @@ class Store:
         removed = 0
         for _ in range(max(1, int(max_batches))):
             if self.database_used_bytes() <= maximum_bytes:
+                break
+            # Graph còn cạnh mồ côi thì dọn chúng TRƯỚC, không cắt thêm event.
+            #
+            # Đo trên database của máy thật (tháng 9/2026): graph chiếm ~1,6 GB
+            # còn `events` chỉ ~119 MB, và một lát dọn 20k cạnh gỡ được ~18k —
+            # graph gần như toàn cạnh mồ côi. Vòng cũ luôn xoá 50k event rồi
+            # mới dọn một lát graph, nên mỗi lượt mất 50k event THẬT mà dung
+            # lượng hầu như không giảm; bảng events đã co từ 1,59 triệu xuống
+            # còn ~0,38 triệu dòng. Bằng chứng gốc bị xoá để giữ lại những cạnh
+            # không còn bằng chứng.
+            #
+            # Lát này có trần (GRAPH_PRUNE_MAX_EDGES) nên không làm lượt dài
+            # thêm đáng kể; còn trên trần thì `maintain` báo `more_work` và
+            # vòng bảo trì quay lại sau một phút.
+            graph = self._prune_graph_slice()
+            self._size_cap_graph_pruned = graph
+            if graph.get("edges_removed", 0) or graph.get("entities_removed", 0):
+                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self.conn.execute("PRAGMA incremental_vacuum")
                 break
             with self.conn:
                 deleted = self.conn.execute(
@@ -2345,7 +2459,7 @@ class Store:
                     cache[key[len(self._RELEARN_KEY):]] = float(value)
                 except (TypeError, ValueError):
                     continue
-            self._relearn_cache = cache
+            self._relearn_cache: dict | None = cache
         return cache.get(kind, 0.0)
 
     def behavior_key_formats(self) -> dict[str, int]:
@@ -2844,7 +2958,7 @@ class Store:
         wanted = sorted({str(ref) for ref in refs if str(ref)})
         if not wanted:
             return []
-        found = []
+        found: list = []
         # Chia lô: một câu IN với vài nghìn tham số vượt trần biến của SQLite.
         for start in range(0, len(wanted), 200):
             batch = wanted[start:start + 200]

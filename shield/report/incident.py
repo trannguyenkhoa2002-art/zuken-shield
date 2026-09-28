@@ -48,7 +48,9 @@ def primary_scenario(incident: dict, alerts) -> tuple[str, str]:
     ]
     if candidates:
         _rank, rule_id = min(candidates)
-        return for_rule(rule_id).scenario_code, "aggregated"
+        scenario = for_rule(rule_id)
+        if scenario is not None:  # lọc ở trên đã bảo đảm, nói rõ cho người đọc
+            return scenario.scenario_code, "aggregated"
     return UNKNOWN, "unknown"
 
 

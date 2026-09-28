@@ -99,9 +99,9 @@ def _analyst(tmp_path, *, config: ModelConfig | None = None, network="deny",
 
 
 def _request(facts=(), refs=(), **kw) -> InvestigationRequest:
-    base = dict(investigation_id="inv1", incident_id="inc1", window_s=3600.0,
-                facts=tuple(facts), entities=(),
-                allowed_evidence_refs=frozenset(refs))
+    base = {"investigation_id": "inv1", "incident_id": "inc1", "window_s": 3600.0,
+                "facts": tuple(facts), "entities": (),
+                "allowed_evidence_refs": frozenset(refs)}
     base.update(kw)
     return InvestigationRequest(**base)
 

@@ -15,7 +15,7 @@ nhiêu, có gắn bằng chứng không, và câu trả lời tất định thay
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 INCIDENT_SUMMARY = "INCIDENT_SUMMARY"
 EVIDENCE_EXPLANATION = "EVIDENCE_EXPLANATION"

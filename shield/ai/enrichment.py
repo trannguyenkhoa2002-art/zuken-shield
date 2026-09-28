@@ -394,4 +394,4 @@ class EnrichmentStore:
     def counts(self) -> dict:
         rows = self.conn.execute(
             "SELECT status, COUNT(*) FROM ai_enrichment_jobs GROUP BY status").fetchall()
-        return {status: count for status, count in rows}
+        return dict(rows)

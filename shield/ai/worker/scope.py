@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from collections.abc import Mapping
 
 from shield.ai.worker.trusted import UntrustedExecutable, validate_executable
 
@@ -161,7 +162,7 @@ def prefix(*, memory_max: str, cpu_quota: str, tasks_max: str,
 _USER_BUS_ENV = ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS")
 
 
-def launcher_env(*, euid: int | None = None, source: dict | None = None) -> dict:
+def launcher_env(*, euid: int | None = None, source: Mapping[str, str] | None = None) -> dict:
     """Biến môi trường THÊM mà `systemd-run` cần. Rỗng khi chạy root.
 
     Trả về rỗng ở production có chủ ý: mỗi biến thêm vào là một đường dẫn kẻ

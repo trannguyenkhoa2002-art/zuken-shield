@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import re
-from pathlib import Path
 
 import pytest
 

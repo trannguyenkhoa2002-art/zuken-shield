@@ -156,7 +156,7 @@ states what is established and what is not.
 **Evidence** — the process identity, the sequence of markers, and the paths
 written, each backed by a stored event.
 
-**Report** — the ten sections, with the process identity rendered exactly as
+**Report** — the eleven sections, with the process identity rendered exactly as
 recorded.
 
 **Guided Q&A**

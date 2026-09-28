@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import time
+from typing import Any, Callable
 
 logger = logging.getLogger("shield.tarpit")
 
@@ -70,7 +71,7 @@ class TarpitManager:
         self.bind_host = bind_host or os.environ.get("SHIELD_TARPIT_BIND") or DEFAULT_BIND_HOST
         self._servers: dict[int, asyncio.AbstractServer] = {}
         self._connections: dict[str, dict] = {}  # conn_id -> {ip, port, since}
-        self._on_new_connection = None  # callback(info: dict) -> None, gán từ ngoài
+        self._on_new_connection: Callable[[dict], Any] | None = None  # gán từ ngoài
 
     @property
     def active_ports(self) -> list[int]:
@@ -143,7 +144,7 @@ class TarpitManager:
         local_port = writer.get_extra_info("sockname")
         local_port = local_port[1] if local_port else 0
         conn_id = f"{src_ip}:{src_port}-{time.time()}"
-        info = {
+        info: dict[str, Any] = {
             "conn_id": conn_id, "ip": src_ip, "src_port": src_port,
             "port": local_port, "since": time.time(), "bytes_sent": 0,
         }

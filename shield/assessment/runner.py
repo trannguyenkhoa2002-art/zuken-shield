@@ -22,7 +22,8 @@ class AssessmentRunner:
     async def run(self, profile: AssessmentProfile) -> AssessmentResult:
         started = time.time()
         session_id = uuid.uuid4().hex
-        results, truth = [], []
+        results: list = []
+        truth: list = []
         for case in profile.tests:
             results.append(await self._run_case(session_id, case, truth))
         result = AssessmentResult(session_id, profile.id, started, time.time(), tuple(results), tuple(truth))
@@ -36,7 +37,7 @@ class AssessmentRunner:
         simulation = self.simulator.create(case, session_id, marker)
         event = simulation.event
         truth.append(simulation.ground_truth)
-        alerts = []
+        alerts: list = []
         try:
             return await asyncio.wait_for(
                 self._evaluate(case, event, marker, started, alerts),

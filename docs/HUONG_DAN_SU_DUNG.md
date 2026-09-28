@@ -1,6 +1,6 @@
 # Zuken Shield — Hướng dẫn sử dụng và vận hành
 
-**Created by Zuken** · Phiên bản `3.0.0a2` · [English version](USER_GUIDE.md)
+**Created by Zuken** · Phiên bản `3.0.0a3` · [English version](USER_GUIDE.md)
 
 Đây là tài liệu đầy đủ: Shield làm gì, cài và chạy ra sao, xử lý một cảnh báo thế
 nào, vận hành production ra sao, và kiểm thử gì trước khi phát hành. Nếu chỉ muốn
@@ -72,7 +72,7 @@ Muốn có ngăn chặn tự động phải đủ **cả ba**: quản trị viê
 
 ```bash
 cd ~/Desktop/"zuken shield"
-sudo apt install ./dist/shield-monitor_3.0.0a2_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
 ```
 
 APT có thể cần Internet để lấy dependency hệ thống còn thiếu. Riêng mã Python của
@@ -82,13 +82,13 @@ Shield được cài offline vào `/opt/shield/.venv`, không đụng PyPI.
 
 ```bash
 ./packaging/build-deb.sh
-sudo apt install ./dist/shield-monitor_3.0.0a2_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
 ```
 
 Build lại mà không đổi version thì phải thêm `--reinstall`:
 
 ```bash
-sudo apt install --reinstall ./dist/shield-monitor_3.0.0a2_amd64.deb
+sudo apt install --reinstall ./dist/shield-monitor_3.0.0a3_amd64.deb
 ```
 
 ### Kiểm tra sau khi cài
@@ -99,7 +99,7 @@ systemctl status shield-agent shield-privileged --no-pager
 journalctl -u shield-agent -n 50 --no-pager
 ```
 
-Kết quả đúng là `install ok installed 3.0.0a2`, cả 2 service `active`, và log
+Kết quả đúng là `install ok installed 3.0.0a3`, cả 2 service `active`, và log
 khởi động liệt kê collector, đường dẫn DB và socket IPC. Bản thân trình cài cũng
 tự chạy health check và thoát với mã lỗi kèm log nếu service không lên.
 
@@ -451,6 +451,15 @@ shield-guardian --json               # chạy một lần, in kết quả
 Agent cũng ping `WATCHDOG=1` cho systemd (`WatchdogSec=90`), nên agent **treo**
 — chứ không chết — cũng bị phát hiện và khởi động lại.
 
+### Thông báo desktop và cảnh báo "agent không chạy"
+
+Cảnh báo critical và sự cố của chính Shield hiện thành thông báo desktop qua
+`shield-notify`, một systemd user service chạy trong phiên của bạn. Nó cũng
+báo nếu không nối được agent quá hai phút — đúng trường hợp agent đã dừng và
+không tự báo được. Gói cài bật dịch vụ này cho mọi user; phiên đang mở sẽ có
+nó từ lần đăng nhập sau, hoặc chạy ngay bằng
+`systemctl --user start shield-notify`.
+
 ### Thu thập log từ máy khác
 
 Xem `PROBE.md` trong cùng thư mục tài liệu. Tóm tắt:
@@ -733,7 +742,7 @@ Mở một sự cố là dựng một báo cáo tất định từ những gì S
 cố, mức nghiêm trọng, khung thời gian, tài sản bị ảnh hưởng, hoạt động quan sát
 được, sự kiện đã xác nhận, bằng chứng đã kiểm, phát hiện hỗ trợ, bước tiếp theo
 nên làm, và giới hạn. Báo cáo đó mới là thứ có thẩm quyền. Nó đầy đủ một mình,
-hiện ra trong khoảng một mili giây, và mọi giá trị trong đó đến từ cơ sở dữ
+không cần model nào, và mọi giá trị trong đó đến từ cơ sở dữ
 liệu chứ không từ model.
 
 Đoạn giải thích của AI, khi có, nằm ở một khối riêng bên dưới, có nhãn, và
@@ -900,14 +909,14 @@ Nếu phiên hiện tại chưa có group `shield`, đăng xuất rồi đăng n
 **Báo `No module named shield`** — virtualenv riêng cài chưa xong:
 
 ```bash
-sudo apt install --reinstall ./dist/shield-monitor_3.0.0a2_amd64.deb
+sudo apt install --reinstall ./dist/shield-monitor_3.0.0a3_amd64.deb
 /opt/shield/.venv/bin/python -c 'import shield; print(shield.__version__)'
 ```
 
 **Cài dở dang hoặc thiếu dependency**
 
 ```bash
-sudo apt install ./dist/shield-monitor_3.0.0a2_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
 sudo dpkg --configure -a
 ```
 

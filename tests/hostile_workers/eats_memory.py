@@ -9,4 +9,4 @@ try:
         blocks.append(bytearray(16 * 1024 * 1024))
 except MemoryError:
     sys.stderr.write("MEMORY_LIMIT_REACHED\n")
-    raise SystemExit(9)
+    raise SystemExit(9) from None

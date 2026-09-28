@@ -1,6 +1,6 @@
 [project]
 name = "shield"
-version = "3.0.0a2"
+version = "3.0.0a3"
 description = "Zuken Shield — privacy-first Linux endpoint and local-network defense platform"
 authors = [{name = "Zuken"}]
 requires-python = ">=3.10"
@@ -51,6 +51,7 @@ shield-privileged = "shield.privileged.__main__:main"
 shield-assess = "shield.assessment.cli:main"
 shield-admin = "shield.security.admin_cli:main"
 shield-guardian = "shield.guardian.__main__:main"
+shield-notify = "shield.notify_bridge:main"
 
 [tool.setuptools.packages.find]
 include = ["shield*"]
@@ -101,7 +102,6 @@ markers = [
 python_version = "3.10"
 files = ["shield", "probe"]
 ignore_missing_imports = true
-# Mypy CHƯA phải cổng chặn: còn 165 lỗi tồn đọng, phần lớn là Optional chưa
-# narrow. Khai ở đây để mọi người chạy cùng một cấu hình; siết dần theo module
-# bằng cách bỏ dòng ignore_errors tương ứng, không siết cả repo một lần.
+# Mypy sạch với cấu hình này từ 27/09/2026 (136 lỗi tồn đọng đã sửa). Giữ nó
+# sạch: một lỗi mới là một lỗi thật cho tới khi chứng minh được ngược lại.
 warn_unused_ignores = false

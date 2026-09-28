@@ -20,6 +20,7 @@ tin từ mạng, và một gói tin dị dạng là thứ kẻ tấn công gửi
 
 from __future__ import annotations
 
+import ipaddress
 import re
 
 SCHEMA_VERSION = 1
@@ -47,8 +48,6 @@ MAX_PAYLOAD_KEYS = 12
 MAX_STRING_CHARS = 256
 MAX_LIST_ITEMS = 16
 
-_IPV4 = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
-_IPV6 = re.compile(r"^[0-9a-fA-F:]{2,45}$")
 _MAC = re.compile(r"^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$")
 
 # Khoá nào phải qua bộ kiểm nào. Khoá lạ bị BỎ, không được đi tiếp "phòng khi".
@@ -64,10 +63,14 @@ ALLOWED_KEYS = (_IP_KEYS | _MAC_KEYS | _INT_KEYS | _STR_KEYS | _LIST_KEYS
 
 
 def valid_ip(value) -> bool:
-    text = str(value)
-    if _IPV4.match(text):
-        return all(0 <= int(part) <= 255 for part in text.split("."))
-    return bool(_IPV6.match(text)) and text.count(":") >= 2
+    # Addresses only: interface scope belongs in the separate interface field.
+    if not isinstance(value, str) or "%" in value:
+        return False
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 def valid_mac(value) -> bool:
@@ -112,7 +115,7 @@ def clean_payload(raw) -> dict | None:
         elif key in _LIST_KEYS:
             if not isinstance(value, list) or len(value) > MAX_LIST_ITEMS:
                 return None
-            items = []
+            items: list[int | str] = []
             for item in value:
                 if isinstance(item, bool) or isinstance(item, int):
                     if not 0 <= int(item) <= 2**32:

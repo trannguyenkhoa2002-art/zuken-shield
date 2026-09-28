@@ -122,7 +122,7 @@ class WatchSession:
         # tcpdump thoát ngay (thường do thiếu quyền CAP_NET_RAW) — không đợi
         # vô hạn, chỉ liếc nhanh để log lỗi rõ ràng thay vì im lặng thất bại.
         await asyncio.sleep(0.3)
-        if self._tcpdump_proc.returncode is not None:
+        if self._tcpdump_proc.returncode is not None and self._tcpdump_proc.stderr is not None:
             stderr = await self._tcpdump_proc.stderr.read()
             logger.error(
                 "tcpdump thoát ngay (mã %s) — không ghi được pcap: %s",

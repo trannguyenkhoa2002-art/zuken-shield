@@ -214,6 +214,9 @@ class LogExporter:
             if freed == 0 and used + needed > self.config.max_bytes:
                 self.last_error = "đã chạm hạn mức và không còn file cũ để xoá"
                 return False
+        if self.directory is None:
+            self.last_error = "chưa cấu hình thư mục xuất log"
+            return False
         try:
             if shutil.disk_usage(self.directory).free < MIN_FREE_BYTES:
                 # Hạn mức là trần của Shield, không phải lời hứa còn chỗ trống.

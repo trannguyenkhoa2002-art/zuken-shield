@@ -17,13 +17,11 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
-import time
 
 import pytest
 
 from shield.agent.bus import Bus
-from shield.agent.collectors.kernel import PROBES, ebpf_exec_loop, probe_support
-from shield.common.models import Event
+from shield.agent.collectors.kernel import ebpf_exec_loop, probe_support
 
 pytestmark = [
     pytest.mark.netns,

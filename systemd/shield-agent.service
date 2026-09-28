@@ -8,7 +8,15 @@ StartLimitIntervalSec=600
 StartLimitBurst=5
 
 [Service]
-Type=simple
+# notify, KHÔNG simple. Với simple, systemd đếm WatchdogSec từ lúc tiến trình
+# bắt đầu, nên khởi động nguội chậm (journal 27/09/2026: >90 giây, chết trước
+# cả dòng log khởi động đầu tiên) bị giết như thể agent treo. Với notify,
+# watchdog chỉ bật sau READY=1 — agent gửi nó khi store đã trả lời — và giai
+# đoạn khởi động có hạn riêng, rõ ràng, là TimeoutStartSec. WatchdogSec giữ
+# nguyên 90: phát hiện treo khi đang chạy không bị nới.
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=300
 # Cần root (uid 0) cho arp-scan/tcpdump/nftables/scapy sniff (mục 0.2 kế
 # hoạch) — root luôn qua được mọi permission check nên chạy egid=shield
 # không mất quyền gì. Group=shield ở đây MỚI là thứ khiến RuntimeDirectory

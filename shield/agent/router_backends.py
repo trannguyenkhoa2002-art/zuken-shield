@@ -46,7 +46,7 @@ _CONNTRACK_TUPLE_RE = re.compile(
 )
 
 
-def _parse_conntrack(text: str, lan_net: ipaddress.IPv4Network) -> list[dict]:
+def _parse_conntrack(text: str, lan_net: ipaddress.IPv4Network | ipaddress.IPv6Network) -> list[dict]:
     tx: dict[str, int] = {}
     rx: dict[str, int] = {}
     for src, dst, nbytes in _CONNTRACK_TUPLE_RE.findall(text):

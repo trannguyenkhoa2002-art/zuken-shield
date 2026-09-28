@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 # TTL ngắn có chủ ý. Một lượt điều tra bình thường xong trong vài giây; token
@@ -74,7 +75,7 @@ class CapabilityToken:
 class CapabilityBroker:
     """Cấp và kiểm token. Điểm thực thi quyền DUY NHẤT."""
 
-    clock: object = time.time
+    clock: Callable[[], float] = time.time
     incident_quota_per_hour: int = DEFAULT_INCIDENT_QUOTA_PER_HOUR
     _tokens: dict = field(default_factory=dict)
     _incident_history: dict = field(default_factory=dict)

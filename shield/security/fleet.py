@@ -92,7 +92,8 @@ class FleetControlServer:
         if context.verify_mode != ssl.CERT_REQUIRED:
             raise ValueError("fleet server requires mutual TLS")
         self.registry, self.context, self.handler = registry, context, handler
-        self.host, self.port, self.server = host, int(port), None
+        self.host, self.port = host, int(port)
+        self.server: asyncio.Server | None = None
 
     async def start(self):
         self.server = await asyncio.start_server(self._handle, self.host, self.port, ssl=self.context,

@@ -275,7 +275,8 @@ def _facts(alert: dict, scenario: Scenario | None) -> tuple[dict, list[str]]:
     "failed_attempts" đọc y hệt một báo cáo mà con số đó bằng không.
     """
     evidence = alert.get("evidence") or {}
-    facts, missing = {}, []
+    facts: dict = {}
+    missing: list = []
     if scenario is None:
         return facts, missing
     for key in scenario.required_fact_keys:

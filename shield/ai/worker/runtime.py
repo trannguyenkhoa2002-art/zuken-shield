@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 
 from shield.ai.model_config import ModelConfig
+from typing import Any
 
 
 class RuntimeUnavailable(RuntimeError):
@@ -38,7 +39,7 @@ class LlamaCppRuntime:
 
     def __init__(self, config: ModelConfig) -> None:
         self.config = config
-        self._llama = None
+        self._llama: Any = None
 
     def load(self) -> None:
         model_path = self.config.validate_model()

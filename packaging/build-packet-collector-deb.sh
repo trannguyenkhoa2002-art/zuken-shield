@@ -51,6 +51,9 @@ sed "s/VERSION_PLACEHOLDER/${VERSION}/" "$ROOT_DIR/packaging/packet-collector/co
 cat > "$STAGE/DEBIAN/postinst" <<'POST'
 #!/bin/sh
 set -e
+if ! getent group shield >/dev/null; then
+    groupadd --system shield
+fi
 VENV=/opt/shield-packet-collector/.venv
 python3 -m venv --system-site-packages --clear "$VENV"
 "$VENV/bin/pip" install --no-index --no-deps --no-build-isolation \

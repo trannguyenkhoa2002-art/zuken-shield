@@ -11,7 +11,7 @@ flowchart TD
     COR --> INC[Incidents]
     EV --> GR[Evidence graph<br/>12 entity types, 11 relations]
     AL --> GR
-    INC --> REP[Deterministic report<br/>10 sections, epistemic state]
+    INC --> REP[Deterministic report<br/>11 sections, epistemic state]
     GR --> REP
     REP --> QA[Guided Q&A<br/>5 closed intents, deterministic]
     INC --> POL[Response policy<br/>ACTION_SPECS]

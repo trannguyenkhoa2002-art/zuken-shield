@@ -144,7 +144,8 @@ class LocalModelAnalyst:
     @staticmethod
     def _split(request: InvestigationRequest):
         """`facts` -> (dữ kiện gốc, quan sát). Cùng một nguồn, hai khối."""
-        facts, observations = [], []
+        facts: list = []
+        observations: list = []
         for fact in request.facts:
             (observations if fact.get("kind") == _OBSERVATION_KIND else facts).append(dict(fact))
         return tuple(facts), tuple(observations)

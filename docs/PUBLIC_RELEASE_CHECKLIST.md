@@ -13,6 +13,8 @@ must be resolved, not merely acknowledged.
 - [x] Startup watchdog timing defect fixed and verified: 16 clean service
       starts, `NRestarts=0`, and a real cold boot with `Result=success` and
       zero watchdog timeouts for that boot
+      *(Correction 2026-09-27: not sufficient — 41 timeouts followed; see
+      `../CHANGELOG.md`, Unreleased.)*
 - [x] Public export scrubbed of private data and pushed to the private
       GitHub repository
 

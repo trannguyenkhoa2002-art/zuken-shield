@@ -83,9 +83,9 @@ def _facts() -> tuple[dict, ...]:
 
 
 def _request(**kw) -> InvestigationRequest:
-    base = dict(investigation_id="inv1", incident_id="inc1", window_s=3600.0,
-                facts=_facts(), entities=(),
-                allowed_evidence_refs=frozenset(REFS))
+    base = {"investigation_id": "inv1", "incident_id": "inc1", "window_s": 3600.0,
+                "facts": _facts(), "entities": (),
+                "allowed_evidence_refs": frozenset(REFS)}
     base.update(kw)
     return InvestigationRequest(**base)
 
@@ -581,7 +581,7 @@ def _bo_phan_phu_thuoc_dong_ho(payload: dict, result) -> str:
     data["limitations"] = [item for item in data["limitations"]
                            if not item.startswith("Phân tích trong ")]
     goi = {k: v for k, v in payload.items() if k != "coordinator"}
-    goi["coordinator"] = {k: v for k, v in payload["coordinator"].items()}
+    goi["coordinator"] = dict(payload["coordinator"].items())
     return json.dumps({"result": data, "payload": goi}, sort_keys=True,
                       default=str, ensure_ascii=False)
 

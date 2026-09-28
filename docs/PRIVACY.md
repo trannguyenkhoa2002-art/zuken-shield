@@ -5,12 +5,26 @@ where that lives, and who can reach it.
 
 ## What stays on the machine
 
-**Everything.** There is no cloud service, no telemetry upload, no crash
-reporting, no licence check, and no remote AI. Shield does not contact the
-developers, and there is no code path that would.
+Monitoring and evidence storage are local by default. There is no telemetry
+upload to the developers, crash reporting, licence check, or remote AI.
 
 Data lives in `/var/lib/shield`: the SQLite database, packet captures, snapshots,
 quarantined files, and backups.
+
+## Optional Telegram notifications
+
+If an administrator configures **both** `SHIELD_TELEGRAM_TOKEN` and
+`SHIELD_TELEGRAM_CHAT_ID` for the agent, it sends alert severity, title and
+detail to the Telegram Bot API over HTTPS. Critical alerts and forced
+self-monitoring notifications can use this path. Without both settings,
+this path makes no request. Remove either setting and restart the agent to
+disable it.
+
+Alert text passes through the shared secret-redaction rules before sending.
+Redaction is pattern-based: addresses, hostnames and process paths may remain
+in the text. The database, PCAPs and snapshots are not uploaded by this path.
+Enable it only if you want Telegram to receive these notifications. Desktop
+notifications are delivered locally and also use the shared redaction rules.
 
 ## What Shield records
 
