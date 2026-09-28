@@ -1955,6 +1955,26 @@ class Store:
                 (alert.ts - self.EVIDENCE_NEARBY_S, alert.ts + self.EVIDENCE_NEARBY_S)).fetchone()
             if nearby:
                 facts.add("dns_changed_nearby")
+        elif alert.rule_id in ("DNS_RESOLVER_CHANGED", "MITM_ROGUE_DHCP"):
+            def near(*rules: str) -> bool:
+                placeholders = ",".join("?" * len(rules))
+                return self.conn.execute(
+                    f"SELECT 1 FROM alerts WHERE rule_id IN ({placeholders}) AND ts BETWEEN ? AND ? LIMIT 1",
+                    (*rules, alert.ts - self.EVIDENCE_NEARBY_S, alert.ts + self.EVIDENCE_NEARBY_S),
+                ).fetchone() is not None
+
+            if alert.rule_id == "DNS_RESOLVER_CHANGED":
+                if near("MITM_ROGUE_DHCP"):
+                    facts.add("rogue_dhcp_nearby")
+                if near("MITM_GATEWAY_MAC_CHANGED", "MITM_ARP_CONFLICT"):
+                    facts.add("gateway_tampering_nearby")
+            else:
+                if near("DNS_RESOLVER_CHANGED", "DNS_UNEXPECTED_SERVER"):
+                    facts.add("dns_changed_nearby")
+                server = str(ev.get("rogue_dhcp") or "")
+                if server and self.conn.execute(
+                        "SELECT 1 FROM devices WHERE ip=? LIMIT 1", (server,)).fetchone():
+                    facts.add("rogue_server_on_lan")
         return facts
 
     def risk_context(self, subject: str) -> dict:

@@ -95,6 +95,24 @@ EVIDENCE_MODELS: dict[str, tuple[ExpectedEvidence, ...]] = {
         _e("dns_changed_nearby", 20, "DNS resolver changed around the same time",
            "Resolver DNS đổi trong cùng khoảng thời gian"),
     ),
+    "DNS_RESOLVER_CHANGED": (
+        _e("resolver_differs", 35, "Resolver differs from the learned baseline",
+           "Resolver khác baseline đã học"),
+        _e("repeated_observation", 20, "Seen more than once", "Thấy lặp lại nhiều lần"),
+        _e("rogue_dhcp_nearby", 25, "An unknown DHCP server appeared around the same time",
+           "Có DHCP server lạ xuất hiện cùng khoảng thời gian"),
+        _e("gateway_tampering_nearby", 20, "Gateway MAC change or ARP conflict around the same time",
+           "Đổi MAC gateway hoặc xung đột ARP cùng khoảng thời gian"),
+    ),
+    "MITM_ROGUE_DHCP": (
+        _e("server_differs", 35, "DHCP server differs from the learned one", "DHCP server khác server đã học"),
+        _SOURCE_IDENTIFIED,
+        _e("repeated_observation", 20, "Seen more than once", "Thấy lặp lại nhiều lần"),
+        _e("dns_changed_nearby", 20, "DNS resolver changed around the same time",
+           "Resolver DNS đổi trong cùng khoảng thời gian"),
+        _e("rogue_server_on_lan", 15, "The rogue server is a known LAN device",
+           "Server lạ là một thiết bị LAN đã biết"),
+    ),
     "MITM_ARP_CONFLICT": (
         _e("multiple_claimants", 35, "Two or more MACs claim the same IP", "Từ hai MAC trở lên cùng claim một IP"),
         _e("repeated_observation", 25, "Seen more than once", "Thấy lặp lại nhiều lần"),
@@ -110,6 +128,7 @@ STORE_FACTS = frozenset({
     "login_succeeded_from_source", "privileged_session_from_source",
     "followed_by_auth_attempts", "mac_belongs_to_other_host",
     "dns_changed_nearby", "gateway_involved",
+    "rogue_dhcp_nearby", "gateway_tampering_nearby", "rogue_server_on_lan",
 })
 
 
@@ -121,7 +140,7 @@ def alert_facts(alert: Alert, *, trusted: bool, repetition: int) -> set[str]:
     """Fact suy ra được từ chính alert và ngữ cảnh chấm điểm, không cần DB."""
     ev = alert.evidence or {}
     facts: set[str] = set()
-    source = ev.get("src_ip") or ev.get("source_ip")
+    source = ev.get("src_ip") or ev.get("source_ip") or ev.get("rogue_dhcp")
     if source:
         facts.add("source_identified")
         if not trusted:
@@ -150,6 +169,12 @@ def alert_facts(alert: Alert, *, trusted: bool, repetition: int) -> set[str]:
             facts.add("baseline_mismatch")
         if observed:
             facts.add("observed_mac_identified")
+    elif rule == "DNS_RESOLVER_CHANGED":
+        if str(ev.get("baseline", "")) and str(ev.get("current", "")) and ev.get("baseline") != ev.get("current"):
+            facts.add("resolver_differs")
+    elif rule == "MITM_ROGUE_DHCP":
+        if ev.get("known_dhcp") and ev.get("rogue_dhcp") and ev.get("known_dhcp") != ev.get("rogue_dhcp"):
+            facts.add("server_differs")
     elif rule == "MITM_ARP_CONFLICT":
         macs = ev.get("macs") or []
         if isinstance(macs, list) and len(set(macs)) >= 2:

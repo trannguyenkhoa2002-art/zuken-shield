@@ -850,7 +850,7 @@ qua kiểm mới được lưu, và chúng bị bỏ khi bằng chứng mà chú
 Mỗi alert mang **Rủi ro hành vi** (hành vi nguy hiểm tới đâu nếu nó là thật) và
 **Độ tin cậy bằng chứng** (quan sát của Shield ủng hộ nó tới đâu), cùng thang
 0–100. Với các rule có mô hình bằng chứng — brute force SSH, port scan, đổi MAC
-gateway, xung đột ARP — chi tiết alert liệt kê những gì đã thấy và những gì
+gateway, xung đột ARP, đổi resolver DNS, DHCP lạ — chi tiết alert liệt kê những gì đã thấy và những gì
 **còn thiếu**, ví dụ "Đăng nhập thành công từ cùng nguồn". Rule chưa có mô hình
 hiện ước lượng chung có dấu `*`; Shield không bịa danh sách thiếu cho chúng.
 Không con số nào đánh dấu một tấn công là đã xác nhận.

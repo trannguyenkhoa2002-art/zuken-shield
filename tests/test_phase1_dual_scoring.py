@@ -48,6 +48,9 @@ def test_every_model_sums_to_100_and_every_fact_can_be_produced():
         Alert(0, "MITM_GATEWAY_MAC_CHANGED", "critical", "", "", "gw",
               evidence={"baseline_mac": "aa", "observed_mac": "bb"}),
         Alert(0, "MITM_ARP_CONFLICT", "critical", "", "", "ip", evidence={"macs": ["aa", "bb"]}),
+        Alert(0, "DNS_RESOLVER_CHANGED", "critical", "", "", "x", evidence={"baseline": "a", "current": "b"}),
+        Alert(0, "MITM_ROGUE_DHCP", "critical", "", "", "x",
+              evidence={"known_dhcp": "192.0.2.1", "rogue_dhcp": "192.0.2.66"}),
     ]
     for alert in samples:
         producible |= evidence_model.alert_facts(alert, trusted=False, repetition=3)

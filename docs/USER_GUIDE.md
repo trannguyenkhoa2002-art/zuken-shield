@@ -858,7 +858,7 @@ are stored, and they are discarded when the evidence they describe changes.
 Every alert carries **Behavior risk** (how dangerous the behavior is if it is
 real) and **Evidence confidence** (how well Shield's observations support it),
 both 0–100. For rules with an evidence model — SSH brute force, port scan,
-gateway MAC change, ARP conflict — the alert detail lists what was observed and
+gateway MAC change, ARP conflict, DNS resolver change, rogue DHCP — the alert detail lists what was observed and
 what is **missing**, for example "Successful login from the same source". Rules
 without a model show a generic estimate marked with `*`; Shield does not invent
 a missing-evidence list for them. Neither number ever marks an attack as

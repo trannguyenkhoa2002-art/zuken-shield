@@ -10,8 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Behavior Risk vs. Evidence Confidence** (phase 1): two scores per alert;
-  declarative evidence models for SSH brute force, port scan, gateway MAC change
-  and ARP conflict list observed and missing evidence.
+  declarative evidence models for SSH brute force, port scan, gateway MAC change,
+  ARP conflict, DNS resolver change and rogue DHCP list observed and missing
+  evidence. DNS change and rogue DHCP corroborate each other when close in time.
+- Evidence-graph edges keep their first 8 evidence refs plus the 24 newest,
+  instead of only the first 32 (which had all expired on long-lived edges).
 - **Gray zone** (phase 2): near-misses, low-confidence and suppressed signals
   are recorded for the analyst; only a person promotes (audited incident with an
   `analyst_promoted` reason) or dismisses them.
