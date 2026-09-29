@@ -33,22 +33,40 @@ def row_values(event: dict) -> list[str]:
     ]
 
 
-def detail_text(event: dict) -> str:
+_TEXT = {
+    "normalized": ("Bản chuẩn hoá", "Normalized"),
+    "raw": ("Dòng gốc", "Raw line"),
+    "no_raw": ("(event này không có dòng log gốc)", "(no original line for this event)"),
+    "rows": ("{n} dòng", "{n} rows"),
+    "matched": ("{n} khớp trực tiếp", "{n} live matched"),
+    "held": ("{n} đang giữ", "{n} held"),
+    "evicted": ("{n} đã trôi khỏi bảng", "{n} scrolled out"),
+    "dropped": ("{n} bị bỏ khi tạm dừng", "{n} dropped while paused"),
+    "new": ("● MỚI  ", "● NEW  "),
+}
+
+
+def _say(key: str, lang: str, **values) -> str:
+    return _pick(_TEXT[key], lang).format(**values)
+
+
+def detail_text(event: dict, lang: str = "en") -> str:
     """Bản chuẩn hoá VÀ dòng gốc, cạnh nhau — không cái nào thay cái nào."""
     raw = str(event.get("raw") or "")
-    return ("normalized:\n" + json.dumps(event.get("data") or {}, indent=2, sort_keys=True, default=str)
-            + "\n\nraw:\n" + (raw if raw else "(no original line for this event)"))
+    return (f"{_say('normalized', lang)}:\n"
+            + json.dumps(event.get("data") or {}, indent=2, sort_keys=True, default=str)
+            + f"\n\n{_say('raw', lang)}:\n" + (raw if raw else _say("no_raw", lang)))
 
 
 def status_text(tab: TabState, lang: str) -> str:
     parts = [_pick(_MODE.get(tab.mode, (tab.mode, tab.mode)), lang),
-             f"{len(tab.rows)} rows", f"{tab.matched} live matched"]
+             _say("rows", lang, n=len(tab.rows)), _say("matched", lang, n=tab.matched)]
     if tab.pending:
-        parts.append(f"{len(tab.pending)} held")
+        parts.append(_say("held", lang, n=len(tab.pending)))
     if tab.evicted:
-        parts.append(f"{tab.evicted} scrolled out")
+        parts.append(_say("evicted", lang, n=tab.evicted))
     if tab.dropped_while_paused:
-        parts.append(f"{tab.dropped_while_paused} dropped while paused")
+        parts.append(_say("dropped", lang, n=tab.dropped_while_paused))
     return " · ".join(parts)
 
 
@@ -56,6 +74,6 @@ def entity_types() -> list[str]:
     return sorted(ENTITY_KEYS)
 
 
-def group_label(group: dict) -> str:
-    badge = "● NEW  " if group.get("new") else ""
+def group_label(group: dict, lang: str = "en") -> str:
+    badge = _say("new", lang) if group.get("new") else ""
     return f"{badge}{group.get('label', '')}  ({int(group.get('count', 0))})"

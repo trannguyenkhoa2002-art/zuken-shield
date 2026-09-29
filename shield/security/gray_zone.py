@@ -124,7 +124,9 @@ class GrayZoneStore:
             raise ValueError(f"unknown gray-zone kind {kind!r}")
         ts = float(alert.ts or self._clock())
         missing = list((alert.evidence_assessment or {}).get("missing") or [])
-        evidence = {k: v for k, v in (alert.evidence or {}).items() if k != "gray_zone"}
+        # Giữ cả `gray_zone` (observed/threshold): giao diện dựng câu lý do từ
+        # đó theo ngôn ngữ người dùng, thay vì hiện câu tiếng Anh cố định.
+        evidence = dict(alert.evidence or {})
         row = self.conn.execute(
             "SELECT entry_id, count FROM gray_zone WHERE state='open' AND kind=? AND rule_id=? "
             "AND subject=?", (kind, alert.rule_id, alert.subject)).fetchone()
