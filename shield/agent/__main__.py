@@ -65,7 +65,7 @@ from shield.ai.audit import InvestigationAudit
 from shield.response.jobs import ResponseJobStore, TransitionError
 from shield.agent.log_export import ExportConfig, LogExporter
 from shield.agent.problems import ProblemReporter, detect_problems, problem_to_alert, resolved_message
-from shield.agent.store import Store
+from shield.agent.store import GraphIngestError, Store
 from shield.agent import switch
 from shield.agent.switch import ALL, MAX_PAUSE_S, MonitoringSwitch, set_switch
 from shield.assessment.exporters import coverage
@@ -503,7 +503,10 @@ async def run_event_consumer(
     graph_failures = 0
     while True:
         ev: Event = await q.get()
-        store.insert_event(ev)
+        # Event + graph trong MỘT commit (Store.ingest_event): đo trên bản sao
+        # DB thật, mỗi event từng tốn ~2,4 commit. Event luôn được lưu; lỗi
+        # graph được ném lại sau commit dưới dạng GraphIngestError.
+        #
         # Evidence graph (kế hoạch 2.0 mục 1.3). Chạy trong thread riêng: nó
         # ghi nhiều dòng cho mỗi event, và chặn event loop ở đây nghĩa là mọi
         # collector đứng chờ SQLite.
@@ -512,9 +515,9 @@ async def run_event_consumer(
         # nó hỏng thì detection hiện có vẫn phải chạy nguyên vẹn — cùng nguyên
         # tắc với AI ở Phase 2, và nó áp dụng ngay từ bây giờ.
         try:
-            await asyncio.to_thread(store.graph_ingest_event, ev)
+            await asyncio.to_thread(store.ingest_event, ev)
             graph_failures = 0
-        except (sqlite3.DatabaseError, ValueError) as exc:
+        except GraphIngestError as exc:
             graph_failures += 1
             logger.warning("Không dựng được evidence graph cho %s/%s: %s",
                            ev.source, ev.kind, exc)

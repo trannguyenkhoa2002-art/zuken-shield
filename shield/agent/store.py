@@ -61,6 +61,10 @@ SCHEMA_VERSION = 11
 CONFIG_SCHEMA_VERSION = 1
 
 
+class GraphIngestError(RuntimeError):
+    """Dựng evidence graph cho một event thất bại. Event ĐÃ được lưu."""
+
+
 class DatabaseIntegrityError(RuntimeError):
     """Raised without modifying the original database when SQLite is corrupt."""
 
@@ -530,6 +534,32 @@ class _ThreadSafeConnection:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
         self._lock = threading.RLock()
+        self._restore_normal = False
+
+    def durable_commit(self) -> None:
+        """Sau commit KẾ TIẾP, fsync WAL để những gì vừa commit là bền.
+
+        Không đổi `synchronous` ngay: SQLite cấm đổi mức an toàn BÊN TRONG
+        transaction ("Safety level may not be changed inside a transaction"),
+        và chỗ gọi (ghi ledger) thường đã ở trong transaction.
+        """
+        with self._lock:
+            self._restore_normal = True
+
+    def _after_commit(self) -> None:
+        if not self._restore_normal:
+            return
+        self._restore_normal = False
+        # Ngoài transaction: một commit nhỏ với synchronous=FULL fsync file WAL,
+        # và fsync là cho CẢ file — các khung ledger vừa commit đi theo.
+        self._conn.execute("PRAGMA synchronous=FULL")
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO baseline (key, value, set_ts) "
+                "VALUES ('forensic_ledger_synced', ?, ?)", (str(time.time()), time.time()))
+            self._conn.commit()
+        finally:
+            self._conn.execute("PRAGMA synchronous=NORMAL")
 
     def __enter__(self) -> "_ThreadSafeConnection":
         # `with store.conn:` là transaction của sqlite3. Giữ khoá suốt cả khối
@@ -544,7 +574,9 @@ class _ThreadSafeConnection:
 
     def __exit__(self, exc_type, exc, tb):
         try:
-            return self._conn.__exit__(exc_type, exc, tb)
+            result = self._conn.__exit__(exc_type, exc, tb)
+            self._after_commit()
+            return result
         finally:
             self._lock.release()
 
@@ -565,6 +597,7 @@ class _ThreadSafeConnection:
     def commit(self) -> None:
         with self._lock:
             self._conn.commit()
+            self._after_commit()
 
     def backup(self, target: sqlite3.Connection) -> None:
         with self._lock:
@@ -610,6 +643,13 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys=ON;")
         self.conn.execute("PRAGMA busy_timeout=5000;")
         self.conn.execute("PRAGMA journal_mode=WAL;")
+        # NORMAL, không FULL: với WAL, database vẫn luôn nhất quán; thứ đổi là
+        # mất điện có thể làm mất vài giao dịch CUỐI. Đo trên máy thật
+        # (30/09/2026): FULL fsync ở mọi commit, 3,7 ms/commit, ~2,4 commit
+        # mỗi event -> 9 ms CPU/event, agent 36 % một lõi ở 38 event/giây.
+        # NORMAL: 0,014 ms/commit. Forensic ledger vẫn fsync từng lần ghi —
+        # xem `_append_forensic_record` và `_ThreadSafeConnection`.
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
         if not existed:
             # CHỈ đặt được trên database còn rỗng: đổi auto_vacuum trên database
             # đã có dữ liệu đòi một lượt VACUUM viết lại toàn bộ file. Với bản
@@ -1334,7 +1374,7 @@ class Store:
                 except OSError:
                     pass
 
-    def insert_event(self, ev: Event) -> None:
+    def _insert_event_row(self, ev: Event) -> None:
         import json
 
         # origin/trust do collector gắn vào Event.data — collector là nơi DUY
@@ -1355,8 +1395,43 @@ class Store:
              ev.event_id, ev.ts_ingested, ev.content_hash_, ev.signature_status,
              ev.collector_version, ev.raw),
         )
+
+    def insert_event(self, ev: Event) -> None:
+        self._insert_event_row(ev)
         self.conn.commit()
         self.touch_collector_event(ev.source, ev.ts)
+
+    def ingest_event(self, ev: Event) -> tuple[int, int]:
+        """Ghi event VÀ dựng graph của nó trong MỘT commit.
+
+        Đo trên bản sao DB thật với 6.000 event thật (30/09/2026): sau khi bỏ
+        fsync từng commit, commit vẫn chiếm ~5,4/8,5 giây vì mỗi event tốn
+        ~2,4 commit (event, graph, hành vi). Gộp event + graph làm một.
+
+        Graph chạy trong SAVEPOINT: dựng graph lỗi thì graph quay lui nhưng
+        event VẪN được lưu — đúng hành vi trước đây, khi event đã commit riêng
+        trước graph. Lỗi graph được ném lại SAU commit để chỗ gọi ghi nhận.
+        """
+        from shield.evidence.resolver import resolve
+
+        graph_error: Exception | None = None
+        written = (0, 0)
+        with self.conn:
+            self._insert_event_row(ev)
+            entities, edges = resolve(ev)
+            if entities or edges:
+                self.conn.execute("SAVEPOINT graph_ingest")
+                try:
+                    written = EvidenceGraph(self.conn).ingest(entities, edges)
+                    self.conn.execute("RELEASE graph_ingest")
+                except (sqlite3.DatabaseError, ValueError) as exc:
+                    self.conn.execute("ROLLBACK TO graph_ingest")
+                    self.conn.execute("RELEASE graph_ingest")
+                    graph_error = exc
+        self.touch_collector_event(ev.source, ev.ts)
+        if graph_error is not None:
+            raise GraphIngestError(str(graph_error)) from graph_error
+        return written
 
     # --- cấu hình xuất log (do người dùng chọn trong Cài đặt) ---
 
@@ -2281,6 +2356,9 @@ class Store:
             self._append_forensic_record(ts, "audit", {"action_id": action_id, "params": params, "result": result})
 
     def _append_forensic_record(self, ts: float, category: str, payload: dict) -> str:
+        # Chuỗi chống giả mạo phải BỀN: ngay sau commit chứa bản ghi này, một
+        # commit nhỏ ở synchronous=FULL fsync file WAL (_ThreadSafeConnection).
+        self.conn.durable_commit()
         payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         row = self.conn.execute("SELECT entry_hash FROM forensic_ledger ORDER BY id DESC LIMIT 1").fetchone()
         prev_hash = row[0] if row else "0" * 64
