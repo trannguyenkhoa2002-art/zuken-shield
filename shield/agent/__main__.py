@@ -3335,6 +3335,9 @@ async def main_async(args: argparse.Namespace) -> None:
     # File hỏng được dời sang một bên làm bằng chứng, không bao giờ bị xoá.
     # Agent la tien trinh DUY NHAT duoc doi schema. Xem Store.__init__.
     store = Store(recover_corrupt=True, allow_migration=True)
+    retired = store.retire_stale_health()
+    if retired:
+        logger.info("Dọn %d dòng sức khoẻ không ai cập nhật quá 7 ngày: %s", len(retired), retired)
     ledger_ok, bad_record, ledger_message = store.verify_forensic_ledger()
     if not ledger_ok:
         logger.critical("FORENSIC LEDGER INVALID at record %s: %s", bad_record, ledger_message)

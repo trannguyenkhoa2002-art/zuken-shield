@@ -217,3 +217,55 @@ def test_backups_are_pruned_after_the_new_copy_exists():
     start = source.index("async def maintenance_loop(")
     body = source[start:source.index("\ndef ", start)]
     assert body.index("store.backup_database") < body.index("store.prune_backups")
+
+
+def test_a_refused_checkpoint_does_not_abort_maintenance(tmp_path):
+    """Máy thật 29/09/2026: `wal_checkpoint(TRUNCATE)` ném `database table is
+    locked` khi kết nối chung còn một câu lệnh dở dang, và cả lượt bảo trì —
+    kèm integrity check và backup phía sau — bị bỏ. Checkpoint là tối ưu."""
+    from tests.test_maintenance_bounds import _edges
+
+    store = Store(tmp_path / "s.db")
+    _edges(store, 300)
+    pending = store.conn._conn.execute("SELECT edge_id FROM graph_edges")
+    pending.fetchone()                       # câu lệnh dở dang trên CÙNG kết nối
+    try:
+        result = store.maintain(30, 90, 30, 1)
+    finally:
+        pending.close()
+    assert result["graph_edges_deleted"] > 0, "lượt bảo trì phải vẫn dọn được graph"
+
+
+def test_a_mostly_healthy_graph_does_not_stop_the_size_cap(tmp_path):
+    """Máy thật 29/09/2026: mỗi lát dọn chỉ gỡ ~4,6 % cạnh, nhưng "gỡ được
+    cạnh nào" đã đủ để bỏ qua cắt event — dung lượng vượt trần mãi."""
+    from shield.common.models import Event as _Event
+    from tests.test_maintenance_bounds import _edges
+
+    store = Store(tmp_path / "s.db")
+    _edges(store, 5)                                     # vài cạnh mồ côi
+    for index in range(200):                             # nhiều cạnh CÒN bằng chứng
+        event = _Event(time.time(), "kernel", "socket_connect",
+                       {"pid": 1000 + index, "start_ticks": "1", "comm": "x",
+                        "remote_ip": f"192.0.2.{index % 250 + 1}", "remote_port": 443})
+        store.insert_event(event)
+        store.graph_ingest_event(event)
+    for index in range(300):
+        store.insert_event(_Event(time.time(), "test", "process_exec", {"i": index}))
+    store.conn.commit()
+    before = store.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    removed = store._enforce_size_cap(1, batch=100)
+    assert removed == 100, "graph gần như sạch thì trần dung lượng phải cắt event"
+    assert store.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == before - 100
+
+
+def test_orphaned_health_rows_are_retired_and_live_ones_kept(tmp_path):
+    """Máy thật 29/09/2026: collector đã gỡ khỏi lõi vẫn hiện "stopped" sau 31 ngày."""
+    store = Store(tmp_path / "s.db")
+    store.set_collector_health("kernel", "ebpf", True, "running", state="running")
+    store.set_collector_health("port_monitor", "scapy", False, "collector stopped", state="stopped")
+    store.conn.execute("UPDATE collector_health SET updated_ts=? WHERE component='port_monitor'",
+                       (time.time() - 31 * 86400,))
+    store.conn.commit()
+    assert store.retire_stale_health() == ["port_monitor"]
+    assert [row["component"] for row in store.collector_health()] == ["kernel"]

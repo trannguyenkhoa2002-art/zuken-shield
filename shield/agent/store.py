@@ -51,6 +51,8 @@ logger = logging.getLogger("shield.store")
 SIZE_CAP_MAX_BATCHES = 1
 RETENTION_DELETE_LIMIT = 50_000
 GRAPH_PRUNE_MAX_EDGES = 20_000
+# Tỷ lệ cạnh mồ côi trong một lát dọn để size cap dọn graph THAY cho cắt event.
+GRAPH_FIRST_ORPHAN_RATIO = 0.5
 # Con trỏ dọn graph, lưu trong `baseline` để một lần khởi động lại không làm
 # lượt quét quay về đầu bảng mãi mãi.
 GRAPH_PRUNE_CURSOR_KEY = "graph_prune_cursor"
@@ -632,10 +634,16 @@ class Store:
             # sớm ở đó sẽ để lại một file rỗng không có bảng nào.
             return
         if existed and previous_version < SCHEMA_VERSION:
-            self.backup_database(
-                self.path.parent / "backups" /
-                f"shield-pre-migration-v{previous_version}-{int(time.time())}.db"
-            )
+            reusable = self._fresh_pre_upgrade_backup(previous_version)
+            if reusable is not None:
+                logger.info("Dùng lại bản sao lưu trước nâng cấp %s làm bản sao lưu trước "
+                            "migration v%d (database không đổi kể từ lúc chép)",
+                            reusable, previous_version)
+            else:
+                self.backup_database(
+                    self.path.parent / "backups" /
+                    f"shield-pre-migration-v{previous_version}-{int(time.time())}.db"
+                )
         self.conn.executescript(SCHEMA)
         self._migrate_schema()
         self.conn.executescript(SCHEMA_INDEXES)
@@ -646,6 +654,53 @@ class Store:
         if self.recovery:
             self.set_baseline("recovered_from_corruption_ts", str(self.recovery["ts"]))
             self.set_baseline("recovered_from_corruption_detail", json.dumps(self.recovery))
+
+    PRE_UPGRADE_REUSE_S = 3600.0
+
+    def _fresh_pre_upgrade_backup(self, previous_version: int) -> Path | None:
+        """Bản `shield-pre-upgrade-*.db` dùng thay được bản sao lưu trước migration.
+
+        Máy thật 29/09/2026: preinst chép DB 2,9 GB lúc 18:22:04, rồi 36 giây sau
+        agent chép lại CÙNG trạng thái đó trước migration v10 -> v11 — 6 GB và
+        ~90 giây khởi động cho một bản sao trùng. Chỉ dùng lại khi CHỨNG MINH
+        được là cùng trạng thái: bản sao mới (< 1 giờ), database và WAL không
+        bị sửa sau lúc chép, cùng user_version, và bản sao qua quick_check.
+        Thiếu điều nào thì sao lưu như cũ — đây là đường lui của migration.
+        """
+        directory = self.path.parent / "backups"
+        if not directory.is_dir():
+            return None
+        candidates = sorted(
+            (p for p in directory.glob("shield-pre-upgrade-*.db") if p.is_file() and not p.is_symlink()),
+            key=lambda p: p.stat().st_mtime, reverse=True)
+        if not candidates:
+            return None
+        backup = candidates[0]
+        taken = backup.stat().st_mtime
+        if time.time() - taken > self.PRE_UPGRADE_REUSE_S:
+            return None
+        for suffix in ("", "-wal"):
+            live = Path(str(self.path) + suffix)
+            if not live.exists():
+                continue
+            info = live.stat()
+            # WAL rỗng vừa được chính lần mở này tạo ra không phải là thay đổi.
+            if suffix == "-wal" and info.st_size == 0:
+                continue
+            if info.st_mtime > taken + 1.0:
+                return None
+        try:
+            probe = sqlite3.connect(f"file:{backup}?mode=ro", uri=True, timeout=5)
+            try:
+                if int(probe.execute("PRAGMA user_version").fetchone()[0]) != previous_version:
+                    return None
+                if [r[0] for r in probe.execute("PRAGMA quick_check(1)").fetchall()] != ["ok"]:
+                    return None
+            finally:
+                probe.close()
+        except sqlite3.DatabaseError:
+            return None
+        return backup
 
     @staticmethod
     def _row_total(conn: sqlite3.Connection) -> int:
@@ -2335,7 +2390,7 @@ class Store:
                 "DELETE FROM audit_snapshots WHERE ts < ?", (now_ts - snapshot_days * 86400,)
             ).rowcount
             intel = self.conn.execute("DELETE FROM threat_intel_cache WHERE expires_ts <= ?", (now_ts,)).rowcount
-        self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        self._compact("PASSIVE", vacuum=False)
         trimmed = 0
         self._size_cap_graph_pruned: dict = {}
         if database_max_bytes > 0:
@@ -2408,6 +2463,28 @@ class Store:
         self.set_baseline(GRAPH_PRUNE_CURSOR_KEY, result.get("next_cursor", ""))
         return result
 
+    def _compact(self, checkpoint: str | None, *, vacuum: bool = True) -> None:
+        """Checkpoint WAL và trả trang tự do — TỐI ƯU, không bao giờ làm hỏng lượt bảo trì.
+
+        Máy thật, 29/09/2026, lượt bảo trì đầu tiên sau khi cài 3.0.0a4:
+        `PRAGMA wal_checkpoint(TRUNCATE)` ném `database table is locked`
+        (SQLITE_LOCKED: kết nối chung còn một câu lệnh dở dang) và cả lượt —
+        cùng integrity check và backup phía sau — bị bỏ. SQLite vẫn tự
+        checkpoint định kỳ, nên bỏ qua một lần là vô hại; hỏng cả lượt thì không.
+        """
+        if checkpoint:
+            for mode in dict.fromkeys((checkpoint, "PASSIVE")):
+                try:
+                    self.conn.execute(f"PRAGMA wal_checkpoint({mode})")
+                    break
+                except sqlite3.OperationalError as exc:
+                    logger.info("wal_checkpoint(%s) bị từ chối (%s); thử lại ở lượt sau", mode, exc)
+        if vacuum:
+            try:
+                self.conn.execute("PRAGMA incremental_vacuum")
+            except sqlite3.OperationalError as exc:
+                logger.info("incremental_vacuum bị từ chối (%s); thử lại ở lượt sau", exc)
+
     def _enforce_size_cap(self, maximum_bytes: int, batch: int = 50_000,
                           max_batches: int = SIZE_CAP_MAX_BATCHES) -> int:
         """Xoá event CŨ NHẤT, TỐI ĐA `max_batches` lô mỗi lượt.
@@ -2451,9 +2528,15 @@ class Store:
             # vòng bảo trì quay lại sau một phút.
             graph = self._prune_graph_slice()
             self._size_cap_graph_pruned = graph
-            if graph.get("edges_removed", 0) or graph.get("entities_removed", 0):
-                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                self.conn.execute("PRAGMA incremental_vacuum")
+            # Chỉ ưu tiên graph khi graph CHỦ YẾU là rác. Bản trước bỏ qua cắt
+            # event hễ lát dọn gỡ được BẤT KỲ cạnh nào; máy thật 29/09/2026
+            # (sau khi cạnh giữ tham chiếu mới nhất) mỗi lát chỉ còn ~900/20.000
+            # cạnh mồ côi (4,6 %), event không bao giờ bị cắt nữa, và dung lượng
+            # dùng thật lên 2.515 MiB so với trần 2.048 MiB.
+            scanned = int(graph.get("edges_scanned", 0) or 0)
+            removed_edges = int(graph.get("edges_removed", 0) or 0)
+            if scanned and removed_edges / scanned >= GRAPH_FIRST_ORPHAN_RATIO:
+                self._compact("TRUNCATE")
                 break
             with self.conn:
                 deleted = self.conn.execute(
@@ -2464,11 +2547,11 @@ class Store:
                 break
             removed += deleted
             self._prune_graph_slice()
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._compact("TRUNCATE", vacuum=False)
             # Trả trang tự do về hệ điều hành nếu database này bật được
             # auto_vacuum (bản cài mới). Không bật thì đây là no-op, và trần
             # vẫn có tác dụng nhờ đo dung lượng logic.
-            self.conn.execute("PRAGMA incremental_vacuum")
+            self._compact(None)
         if removed:
             logger.warning(
                 "Cắt bớt %d event cũ nhất để giữ database dưới %d byte", removed, maximum_bytes)
@@ -3310,6 +3393,26 @@ class Store:
              "detail": row[4], "updated_ts": row[5]}
             for row in rows
         ]
+
+    STALE_HEALTH_S = 7 * 86400.0
+
+    def retire_stale_health(self, max_age_s: float = STALE_HEALTH_S) -> list[str]:
+        """Xoá dòng sức khoẻ không ai cập nhật quá `max_age_s`; trả về tên đã xoá.
+
+        Máy thật 29/09/2026: `arp_ndp_dhcp`, `dns_packet_monitor`,
+        `port_monitor` — collector scapy cũ đã bị gỡ khỏi lõi — vẫn hiện
+        "stopped" với heartbeat 31 ngày trước. Một thành phần đang sống ghi lại
+        dòng của nó ngay khi chạy, nên dòng cũ hơn một tuần là dòng mồ côi và
+        làm màn hình sức khoẻ nói sai.
+        """
+        cutoff = time.time() - max(3600.0, float(max_age_s))
+        stale = [row[0] for row in self.conn.execute(
+            "SELECT component FROM collector_health WHERE updated_ts < ? ORDER BY component",
+            (cutoff,)).fetchall()]
+        if stale:
+            with self.conn:
+                self.conn.execute("DELETE FROM collector_health WHERE updated_ts < ?", (cutoff,))
+        return stale
 
     def collector_health(self) -> list[dict]:
         rows = self.conn.execute(
