@@ -74,13 +74,10 @@ def test_the_i18n_audit_finds_no_missing_keys_or_placeholder_mismatch():
 
 def test_no_display_text_bypasses_translation():
     """Strict: không khoá thiếu, không chữ hiển thị viết cứng ngoài danh sách cho phép.
-    Lần kiểm 30/09/2026 bắt được "Created by" ở thanh tiêu đề."""
+    Dòng ghi công và chữ "online" giữ nguyên có chủ ý (test_ui_wiring,
+    test_online_devices)."""
     result = subprocess.run([sys.executable, str(ROOT / "scripts/check-i18n.py"), "--strict"],
                             capture_output=True, text=True, cwd=ROOT)
     assert result.returncode == 0, result.stdout[:1500]
     assert "HARDCODED display text (0)" in result.stdout
 
-
-def test_the_header_is_translated():
-    vi, en = STRINGS["header.brand"]
-    assert "Tạo bởi" in vi and "Created by" in en

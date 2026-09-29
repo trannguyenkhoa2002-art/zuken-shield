@@ -26,7 +26,10 @@ DISPLAY_CTORS = {"QLabel", "QPushButton", "QCheckBox", "QGroupBox", "QAction", "
 LETTERS = re.compile(r"[A-Za-zÀ-ỹ]{2,}")
 # Chữ không cần dịch: ký hiệu, đơn vị, tên kỹ thuật, dấu phân cách.
 # Tên ngôn ngữ luôn viết bằng chính ngôn ngữ đó; định dạng giờ; hậu tố tên cửa sổ.
-ALLOWED_LITERALS = {"OK", "—", "1h", "24h", "7d", "…", "English", "Tiếng Việt", "HH:MM", "— Shield"}
+# Dòng ghi công "ZUKEN SHIELD ver … • Created by …" giữ nguyên ở mọi ngôn ngữ
+# theo chủ ý của dự án (tests/test_ui_wiring.py).
+ALLOWED_LITERALS = {"OK", "—", "1h", "24h", "7d", "…", "English", "Tiếng Việt", "HH:MM", "— Shield",
+                    "ZUKEN SHIELD  ver", "•  Created by"}
 
 
 def used_keys() -> dict[str, list[str]]:

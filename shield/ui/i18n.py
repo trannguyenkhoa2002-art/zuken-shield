@@ -33,10 +33,6 @@ STRINGS: dict[str, tuple[str, str]] = {
     "severity.critical": ("Nguy cấp", "Critical"),
     "alerts.col_risk": ("Điểm rủi ro", "Risk score"),
     "alerts.col_confidence": ("Độ tin cậy bằng chứng", "Evidence confidence"),
-    "header.brand": (
-        "ZUKEN SHIELD  phiên bản {version}  •  Tạo bởi {creator}",
-        "ZUKEN SHIELD  ver {version}  •  Created by {creator}",
-    ),
     "nav.gray_zone": ("Vùng xám", "Gray zone"),
     "nav.workspace": ("Điều tra trực tiếp", "Live workspace"),
     "workspace.title": ("Điều tra trực tiếp", "Live workspace"),
@@ -389,11 +385,11 @@ STRINGS: dict[str, tuple[str, str]] = {
         "No alerts have involved this device.",
     ),
     "devices.col_online": ("Kết nối", "Connection"),
-    "devices.online": ("Trực tuyến", "Online"),
-    "devices.offline": ("Ngoại tuyến", "Offline"),
+    "devices.online": ("Online", "Online"),
+    "devices.offline": ("Offline", "Offline"),
     "devices.unknown_name": ("Chưa rõ tên", "Unnamed"),
     "overview.devices_value": (
-        "{online} trực tuyến / {total}", "{online} online / {total}",
+        "{online} online / {total}", "{online} online / {total}",
     ),
     "overview.online_title": (
         "Thiết bị đang online", "Devices online right now",

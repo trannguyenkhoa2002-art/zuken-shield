@@ -5352,9 +5352,9 @@ class MainWindow(QMainWindow):
         header.setObjectName("appHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(22, 14, 22, 14)
-        brand = ElidedLabel("")
+        # Dòng ghi công giữ nguyên ở mọi ngôn ngữ (tests/test_ui_wiring.py).
+        brand = ElidedLabel(f"ZUKEN SHIELD  ver {__display_version__}  •  Created by {__creator__}")
         brand.setObjectName("appBrand")
-        self._brand = brand
         header_layout.addWidget(brand)
         header_layout.addSpacing(22)
         page_column = QVBoxLayout()
@@ -5410,8 +5410,6 @@ class MainWindow(QMainWindow):
         self.client.start()
 
     def _retranslate_tab_bar(self) -> None:
-        if hasattr(self, "_brand"):
-            self._brand.setText(t("header.brand", version=__display_version__, creator=__creator__))
         for section_index, (section_key, _description_key, pages) in enumerate(self._sections):
             self.tabs.setTabText(section_index, t(section_key))
             section_tabs = self._section_tabs[section_index]
