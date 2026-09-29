@@ -122,6 +122,11 @@ class TabState:
     evicted: int = 0                    # dòng bị đẩy khỏi bộ đệm tab
     dropped_while_paused: int = 0       # vượt MAX_PENDING lúc Pause
     matched: int = 0
+    # Số dòng đã TỪNG được thêm vào `rows` (không giảm khi bị đẩy ra). Giao diện
+    # so với số đã vẽ để chỉ chèn phần mới, không dựng lại cả bảng.
+    appended: int = 0
+    # Tăng mỗi khi `rows` bị thay toàn bộ (replay): giao diện phải vẽ lại hết.
+    generation: int = 0
 
     def offer(self, event: dict) -> bool:
         """Event live. True nếu nó khớp bộ lọc (dù đang hiện hay đang giữ)."""
@@ -154,6 +159,7 @@ class TabState:
     def load_replay(self, events: list[dict]) -> None:
         """Lịch sử từ database, xếp theo thời gian TĂNG dần — đọc như nó đã xảy ra."""
         self.mode = "replay"
+        self.generation += 1
         self.rows.clear()
         for event in sorted((e for e in events if self.filter.matches(e)),
                             key=lambda e: (float(e.get("ts") or 0), str(e.get("event_id") or ""))):
@@ -165,6 +171,7 @@ class TabState:
         return [event for event in self.rows if probe.matches(event)]
 
     def _append(self, event: dict) -> None:
+        self.appended += 1
         if len(self.rows) == self.rows.maxlen:
             self.evicted += 1
         self.rows.append(event)

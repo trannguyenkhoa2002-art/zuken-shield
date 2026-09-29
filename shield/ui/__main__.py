@@ -1720,6 +1720,10 @@ class TrafficTab(QWidget, I18nMixin):
             self._curve.setData(list(self._data))
 
 
+RENDER_INTERVAL_MS = 250
+RENDER_MAX_ROWS = 500
+
+
 class WorkspaceTabView(QWidget):
     """Một tab của Live Workspace: Live / Pause / Search / Replay."""
 
@@ -1744,7 +1748,7 @@ class WorkspaceTabView(QWidget):
         controls.addWidget(self.replay_btn)
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText(t("workspace.search"))
-        self.search_box.textChanged.connect(lambda _t: self.refresh_rows())
+        self.search_box.textChanged.connect(lambda _t: self.refresh_rows(full=True))
         controls.addWidget(self.search_box)
         layout.addLayout(controls)
         self.status_label = QLabel()
@@ -1762,8 +1766,18 @@ class WorkspaceTabView(QWidget):
         splitter.addWidget(self.detail)
         layout.addWidget(splitter)
         self._shown: list[dict] = []
+        self._drawn_appended = 0
+        self._drawn_generation = -1
+        # Gộp nhịp vẽ: event live chỉ đánh dấu "bẩn"; bảng cập nhật tối đa
+        # 4 lần/giây. Trước đây MỖI event xoá trắng rồi dựng lại cả bảng — đo
+        # trên agent thật: 130 lần xoá trắng trong 15 giây, dòng đang chọn bị
+        # mất — người dùng thấy tab "bật/tắt liên tục".
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(RENDER_INTERVAL_MS)
+        self._render_timer.timeout.connect(self.refresh_rows)
         self._update_live_label()
-        self.refresh_rows()
+        self.refresh_rows(full=True)
 
     def _update_live_label(self) -> None:
         key = {"live": "workspace.live", "replay": "workspace.replaying"}.get(self.state.mode, "workspace.paused")
@@ -1771,6 +1785,9 @@ class WorkspaceTabView(QWidget):
 
     def _on_live_toggled(self, live: bool) -> None:
         if live:
+            # Bấm Live = chủ động theo luồng: bỏ chọn dòng, nếu không cơ chế
+            # tự tạm dừng (giữ dòng đang chọn) sẽ dừng lại ngay lập tức.
+            self.table.clearSelection()
             self.state.resume()
         else:
             self.state.pause()
@@ -1794,16 +1811,59 @@ class WorkspaceTabView(QWidget):
             self.status_label.setToolTip(json.dumps(summary, default=str))
         self.refresh_rows()
 
-    def refresh_rows(self) -> None:
+    def schedule_refresh(self) -> None:
+        if not self._render_timer.isActive():
+            self._render_timer.start()
+
+    def _fill_row(self, row: int, event: dict) -> None:
+        for col, value in enumerate(workspace_view.row_values(event)):
+            self.table.setItem(row, col, QTableWidgetItem(value))
+
+    def refresh_rows(self, full: bool = False) -> None:
         text = self.search_box.text().strip()
-        rows = self.state.search(text) if text else list(self.state.rows)
-        self._shown = rows[-500:]
-        self.table.setRowCount(0)
-        for event in reversed(self._shown):
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            for col, value in enumerate(workspace_view.row_values(event)):
-                self.table.setItem(row, col, QTableWidgetItem(value))
+        new_count = self.state.appended - self._drawn_appended
+        incremental = (not full and not text and self._drawn_generation == self.state.generation
+                       and 0 <= new_count <= RENDER_MAX_ROWS)
+        selected = self.table.selectionModel().selectedRows() if incremental and new_count else []
+        if selected and selected[0].row() + new_count >= RENDER_MAX_ROWS and self.state.mode == "live":
+            # Dòng người dùng đang đọc sắp bị đẩy khỏi bảng: TỰ TẠM DỪNG thay vì
+            # để nó biến mất. Event mới vẫn được giữ (TabState.pending cho các
+            # event sau lúc dừng), và bấm Live là thấy hết.
+            self.state.pause()
+            self.live_btn.blockSignals(True)
+            self.live_btn.setChecked(False)
+            self.live_btn.blockSignals(False)
+            self._update_live_label()
+            self.status_label.setText(t("workspace.auto_paused"))
+            return
+        if incremental and new_count:
+            # Chỉ CHÈN dòng mới lên đầu và cắt đuôi: không xoá trắng, giữ dòng
+            # đang chọn và vị trí cuộn.
+            fresh = list(self.state.rows)[-new_count:]
+            self.table.setUpdatesEnabled(False)
+            try:
+                for event in fresh:
+                    self.table.insertRow(0)
+                    self._fill_row(0, event)
+                    self._shown.append(event)
+                overflow = self.table.rowCount() - RENDER_MAX_ROWS
+                for _ in range(max(0, overflow)):
+                    self.table.removeRow(self.table.rowCount() - 1)
+                self._shown = self._shown[-RENDER_MAX_ROWS:]
+            finally:
+                self.table.setUpdatesEnabled(True)
+        elif not incremental:
+            rows = self.state.search(text) if text else list(self.state.rows)
+            self._shown = rows[-RENDER_MAX_ROWS:]
+            self.table.setUpdatesEnabled(False)
+            try:
+                self.table.setRowCount(len(self._shown))
+                for row, event in enumerate(reversed(self._shown)):
+                    self._fill_row(row, event)
+            finally:
+                self.table.setUpdatesEnabled(True)
+        self._drawn_appended = self.state.appended
+        self._drawn_generation = self.state.generation
         self.status_label.setText(workspace_view.status_text(self.state, current_lang()))
 
     def _show_detail(self) -> None:
@@ -1812,7 +1872,7 @@ class WorkspaceTabView(QWidget):
             return
         index = len(self._shown) - 1 - items[0].row()
         if 0 <= index < len(self._shown):
-            self.detail.setPlainText(workspace_view.detail_text(self._shown[index]))
+            self.detail.setPlainText(workspace_view.detail_text(self._shown[index], current_lang()))
 
 
 class LiveWorkspaceTab(QWidget, I18nMixin):
@@ -1857,7 +1917,7 @@ class LiveWorkspaceTab(QWidget, I18nMixin):
         self._groups = list(groups)
         self.group_list.clear()
         for group in self._groups:
-            item = QListWidgetItem(workspace_view.group_label(group))
+            item = QListWidgetItem(workspace_view.group_label(group, current_lang()))
             item.setData(Qt.ItemDataRole.UserRole, group.get("filter"))
             self.group_list.addItem(item)
 
@@ -1931,7 +1991,7 @@ class LiveWorkspaceTab(QWidget, I18nMixin):
         for tab_id in self.workspace.dispatch(event):
             view = self.views.get(tab_id)
             if view is not None and view.state.mode == "live":
-                view.refresh_rows()
+                view.schedule_refresh()
 
 
 class GrayZoneTab(QWidget, I18nMixin):
@@ -1957,7 +2017,8 @@ class GrayZoneTab(QWidget, I18nMixin):
         controls = row_layout()
         self.state_combo = QComboBox()
         for state in self.STATES:
-            self.state_combo.addItem(state, state)
+            self.state_combo.addItem(t(f"gray.state.{state}"), state)
+        self.bind(self._retranslate_states)
         self.state_combo.currentIndexChanged.connect(lambda _i: self.refresh())
         controls.addWidget(self.state_combo)
         self.promote_btn = QPushButton()
@@ -1978,6 +2039,10 @@ class GrayZoneTab(QWidget, I18nMixin):
         layout.addWidget(self.table)
         self.bind(self._render)
         self.load_from_store()
+
+    def _retranslate_states(self) -> None:
+        for index, state in enumerate(self.STATES):
+            self.state_combo.setItemText(index, t(f"gray.state.{state}"))
 
     def load_from_store(self) -> None:
         try:
@@ -5287,8 +5352,9 @@ class MainWindow(QMainWindow):
         header.setObjectName("appHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(22, 14, 22, 14)
-        brand = ElidedLabel(f"ZUKEN SHIELD  ver {__display_version__}  •  Created by {__creator__}")
+        brand = ElidedLabel("")
         brand.setObjectName("appBrand")
+        self._brand = brand
         header_layout.addWidget(brand)
         header_layout.addSpacing(22)
         page_column = QVBoxLayout()
@@ -5344,6 +5410,8 @@ class MainWindow(QMainWindow):
         self.client.start()
 
     def _retranslate_tab_bar(self) -> None:
+        if hasattr(self, "_brand"):
+            self._brand.setText(t("header.brand", version=__display_version__, creator=__creator__))
         for section_index, (section_key, _description_key, pages) in enumerate(self._sections):
             self.tabs.setTabText(section_index, t(section_key))
             section_tabs = self._section_tabs[section_index]

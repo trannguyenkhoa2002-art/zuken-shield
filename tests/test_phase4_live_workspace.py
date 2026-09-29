@@ -294,9 +294,12 @@ def test_the_qt_workspace_opens_tabs_pauses_replays_and_searches(tmp_path):
     tab_id = tab.open_filter(WorkspaceFilter(kinds=frozenset({"ssh_failed_password"})))
     view = tab.views[tab_id]
     tab.on_live_event(_ev(raw="Failed password for root"))
+    assert view._render_timer.isActive(), "event live phải hẹn vẽ, không vẽ ngay"
+    view.refresh_rows()
     assert view.table.rowCount() == 1
     view.live_btn.setChecked(False)
     tab.on_live_event(_ev(raw="while paused"))
+    view.refresh_rows()
     assert view.table.rowCount() == 1 and len(view.state.pending) == 1
     view._replay()
     assert client.sent[-1]["cmd"] == "workspace_history"
@@ -369,3 +372,81 @@ def test_the_first_discovery_run_does_not_call_everything_new(tmp_path):
     later = {g["label"]: g for g in discover_groups(store.conn, now + 180)}
     assert later["usb_added @ endpoint"]["new"] is True, "kind xuất hiện SAU khi bắt đầu theo dõi là mới"
     assert later["file_write @ kernel"]["new"] is False
+
+
+def test_live_events_never_blank_the_table_or_drop_the_selection():
+    """Máy thật 30/09/2026: mỗi event live xoá trắng rồi dựng lại cả bảng —
+    130 lần trong 15 giây, dòng đang chọn bị mất: tab "bật/tắt liên tục"."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    widgets = pytest.importorskip("PySide6.QtWidgets")
+    try:
+        app = widgets.QApplication.instance() or widgets.QApplication([])
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"Qt unavailable: {exc}")
+    from shield.ui.__main__ import RENDER_MAX_ROWS, LiveWorkspaceTab
+
+    class Client:
+        def send_command(self, msg):
+            return True
+
+    tab = LiveWorkspaceTab(Client())
+    view = tab.views[tab.open_filter(WorkspaceFilter())]
+    for index in range(5):
+        tab.on_live_event(_ev(raw=f"first {index}"))
+    view.refresh_rows()
+    view.table.selectRow(2)
+    selected = view.table.item(2, 5).text()
+
+    blanked = []
+    original = view.table.setRowCount
+    view.table.setRowCount = lambda n: (blanked.append(n) if n == 0 else None, original(n))[1]
+    for round_ in range(20):
+        for index in range(10):
+            tab.on_live_event(_ev(raw=f"burst {round_}-{index}"))
+        view.refresh_rows()
+    app.processEvents()
+    assert blanked == [], "cập nhật live không được xoá trắng bảng"
+    assert view.table.rowCount() == 205
+    rows = view.table.selectionModel().selectedRows()
+    assert rows and view.table.item(rows[0].row(), 5).text() == selected, "dòng đang chọn phải giữ nguyên"
+    assert view.table.item(0, 5).text() == "burst 19-9", "mới nhất ở trên cùng"
+
+    for index in range(RENDER_MAX_ROWS + 50):
+        tab.on_live_event(_ev(raw=f"flood {index}"))
+    view.refresh_rows()
+    assert view.table.rowCount() == RENDER_MAX_ROWS
+    view.table.selectRow(0)
+    view._show_detail()
+    assert "flood" in view.detail.toPlainText(), "chi tiết phải khớp đúng dòng đang chọn"
+
+
+def test_a_selected_row_is_never_pushed_out_while_live():
+    """Máy thật: ~40 event/giây đẩy một dòng đang đọc ra khỏi bảng 500 dòng trong ~12 giây."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    widgets = pytest.importorskip("PySide6.QtWidgets")
+    try:
+        widgets.QApplication.instance() or widgets.QApplication([])
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"Qt unavailable: {exc}")
+    from shield.ui.__main__ import RENDER_MAX_ROWS, LiveWorkspaceTab
+
+    class Client:
+        def send_command(self, msg):
+            return True
+
+    tab = LiveWorkspaceTab(Client())
+    view = tab.views[tab.open_filter(WorkspaceFilter())]
+    for index in range(RENDER_MAX_ROWS):
+        tab.on_live_event(_ev(raw=f"row {index}"))
+    view.refresh_rows()
+    view.table.selectRow(RENDER_MAX_ROWS - 3)
+    reading = view.table.item(RENDER_MAX_ROWS - 3, 5).text()
+    for index in range(10):
+        tab.on_live_event(_ev(raw=f"new {index}"))
+    view.refresh_rows()
+    assert view.state.mode == "paused" and not view.live_btn.isChecked()
+    rows = view.table.selectionModel().selectedRows()
+    assert rows and view.table.item(rows[0].row(), 5).text() == reading
+    view.live_btn.setChecked(True)
+    assert view.state.mode == "live"
+    assert view.table.item(0, 5).text() == "new 9", "về Live thì thấy event đã giữ"
