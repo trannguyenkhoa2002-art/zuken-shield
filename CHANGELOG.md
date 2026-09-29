@@ -5,7 +5,7 @@ and is not reproduced here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — internal package version `3.0.0a7`
+## [Unreleased] — internal package version `3.0.0a8`
 
 ### Added
 
@@ -30,6 +30,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `scripts/verify-agent-capabilities.py` and the real eBPF probes.
 - `tests/test_response_e2e_netns.py`: response apply / verify / rollback
   against real nftables with the real privileged helper.
+
+### Performance
+
+- Event pipeline 12.8x faster on real data (8.99 -> 0.70 ms/event, 6,000 real
+  events on a copy of a 2.9 GB database): WAL with `synchronous=NORMAL`
+  (the forensic ledger still fsyncs), and one commit per event for the event
+  and its evidence graph.
 
 ### Fixed
 

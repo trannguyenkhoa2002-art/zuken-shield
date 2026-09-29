@@ -1,6 +1,6 @@
 [project]
 name = "shield"
-version = "3.0.0a7"
+version = "3.0.0a8"
 description = "Zuken Shield — privacy-first Linux endpoint and local-network defense platform"
 authors = [{name = "Zuken"}]
 requires-python = ">=3.10"
