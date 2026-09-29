@@ -45,3 +45,23 @@ def test_the_measurement_scripts_ship_with_the_repository():
         assert probe in script, probe
     for forbidden in ("setuid", "mknod", "sys_module"):
         assert forbidden in script, forbidden
+
+
+def test_the_ui_graph_dependencies_are_declared():
+    """Máy thật 29/09/2026: pyqtgraph có mặt nhưng thiếu PySide6.QtOpenGL, và
+    giao diện báo sai "chưa cài pyqtgraph"."""
+    control = (ROOT / "packaging/debian/control").read_text(encoding="utf-8")
+    depends = next(line for line in control.splitlines() if line.startswith("Depends:"))
+    for package in ("python3-pyside6.qtopengl", "python3-pyside6.qtopenglwidgets"):
+        assert package in depends, package
+    # pyqtgraph kéo PyQt (GPL) trên Ubuntu: chỉ gợi ý, không bắt buộc.
+    assert "python3-pyqtgraph" not in depends
+
+
+def test_the_display_version_follows_the_package_version():
+    import shield
+
+    assert shield._display("3.0.0a4") == "3.0 Alpha 4"
+    assert shield._display("3.1.0rc2") == "3.1 RC 2"
+    assert shield._display("4.0.0") == "4.0"
+    assert shield.__display_version__ == shield._display(shield.__version__)

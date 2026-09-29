@@ -303,6 +303,7 @@ def test_the_qt_workspace_opens_tabs_pauses_replays_and_searches(tmp_path):
     tab.on_history({"tab_id": tab_id, "events": [_ev(raw="old A", ts=1.0), _ev(raw="old B", ts=2.0)],
                     "summary": {}})
     assert view.table.rowCount() == 2 and view.state.mode == "replay"
+    assert not view.live_btn.isChecked(), "đang xem lại mà nút vẫn báo Live"
     view.search_box.setText("old B")
     assert view.table.rowCount() == 1
     view.search_box.setText("")
@@ -355,3 +356,16 @@ def test_recent_events_are_found_even_when_graph_refs_point_only_at_expired_ones
     assert [e["event_id"] for e in history["events"]] == [recent.event_id]
     assert history["summary"]["from_recent_scan"] == 1 and history["summary"]["from_graph"] == 0
     assert history["summary"]["observations"] >= MAX_EVIDENCE_REFS_PER_EDGE
+
+
+def test_the_first_discovery_run_does_not_call_everything_new(tmp_path):
+    """Máy thật 29/09/2026: lần đầu mọi kind hiện "NEW", kể cả file_write có từ hàng tháng."""
+    store = Store(tmp_path / "s.db")
+    now = time.time()
+    store.insert_event(Event(now - 60, "kernel", "file_write", {"exe": "/usr/bin/bash"}))
+    first = {g["label"]: g for g in discover_groups(store.conn, now)}
+    assert first["file_write @ kernel"]["new"] is False
+    store.insert_event(Event(now + 120, "endpoint", "usb_added", {"vendor": "x"}))
+    later = {g["label"]: g for g in discover_groups(store.conn, now + 180)}
+    assert later["usb_added @ endpoint"]["new"] is True, "kind xuất hiện SAU khi bắt đầu theo dõi là mới"
+    assert later["file_write @ kernel"]["new"] is False

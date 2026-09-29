@@ -42,6 +42,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "workspace.too_many": ("Tối đa {max} tab. Đóng bớt một tab trước.", "At most {max} tabs. Close one first."),
     "workspace.live": ("● Trực tiếp", "● Live"),
     "workspace.paused": ("❚❚ Tạm dừng", "❚❚ Paused"),
+    "workspace.replaying": ("↺ Đang xem lại — bấm để về trực tiếp", "↺ Replaying — click to go live"),
     "workspace.replay": ("Xem lại", "Replay"),
     "workspace.search": ("Tìm trong tab (dòng gốc + bản chuẩn hoá)", "Search this tab (raw + normalized)"),
     "workspace.kind": ("Loại event (kind)", "Event kind"),
@@ -505,8 +506,8 @@ STRINGS: dict[str, tuple[str, str]] = {
     "traffic.axis_bps": ("Bytes/giây", "Bytes/second"),
     "traffic.axis_seconds": ("Giây gần nhất", "Recent seconds"),
     "traffic.no_pyqtgraph": (
-        "(chưa cài pyqtgraph — chỉ hiện số liệu dạng chữ)",
-        "(pyqtgraph not installed — showing text-only numbers)",
+        "(không dựng được đồ thị: {reason} — chỉ hiện số liệu dạng chữ)",
+        "(graph unavailable: {reason} — showing text-only numbers)",
     ),
     # --- Tự kiểm tra ---
     "audit.sub": (

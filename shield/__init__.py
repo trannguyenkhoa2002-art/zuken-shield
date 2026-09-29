@@ -8,6 +8,22 @@
 # "ver 1.1 RC" suốt cả hai vòng phát hành 2.0 — người dùng nhìn vào app và
 # thấy một phiên bản không tồn tại.
 __version__ = "3.0.0a4"
-__display_version__ = "3.0 Alpha 2"
+
+
+def _display(version: str) -> str:
+    """"3.0.0a4" -> "3.0 Alpha 4". SUY RA từ __version__, không gõ tay: bản
+    3.0.0a4 cài trên máy thật (29/09/2026) vẫn hiện "ver 3.0 Alpha 2" vì chuỗi
+    hiển thị bị quên khi nâng số."""
+    import re
+
+    match = re.fullmatch(r"(\d+)\.(\d+)\.\d+(?:(a|b|rc)(\d+))?", version)
+    if not match:
+        return version
+    major, minor, stage, number = match.groups()
+    label = {"a": "Alpha", "b": "Beta", "rc": "RC"}.get(stage or "", "")
+    return f"{major}.{minor} {label} {number}".strip() if label else f"{major}.{minor}"
+
+
+__display_version__ = _display(__version__)
 __creator__ = "Zuken"
 __product_name__ = "Zuken Shield"

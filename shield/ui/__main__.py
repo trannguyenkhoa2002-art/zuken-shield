@@ -1500,9 +1500,12 @@ class TrafficTab(QWidget, I18nMixin):
             self.plot_widget.showGrid(x=True, y=True, alpha=0.15)
             self._curve = self.plot_widget.plot(pen=pg.mkPen(color=theme.ACCENT, width=2))
             layout.addWidget(self.plot_widget)
-        except ImportError:
+        except ImportError as exc:
+            # Nói LÝ DO thật: trên máy thật pyqtgraph ĐÃ cài, thứ thiếu là
+            # PySide6.QtOpenGL — câu "chưa cài pyqtgraph" đã chỉ sai chỗ sửa.
             no_pg_label = QLabel()
-            self.bind(lambda lbl=no_pg_label: lbl.setText(t("traffic.no_pyqtgraph")))
+            reason = str(exc)
+            self.bind(lambda lbl=no_pg_label, r=reason: lbl.setText(t("traffic.no_pyqtgraph", reason=r)))
             layout.addWidget(no_pg_label)
 
         self._last_traffic: dict | None = None
@@ -1763,7 +1766,8 @@ class WorkspaceTabView(QWidget):
         self.refresh_rows()
 
     def _update_live_label(self) -> None:
-        self.live_btn.setText(t("workspace.live") if self.state.mode == "live" else t("workspace.paused"))
+        key = {"live": "workspace.live", "replay": "workspace.replaying"}.get(self.state.mode, "workspace.paused")
+        self.live_btn.setText(t(key))
 
     def _on_live_toggled(self, live: bool) -> None:
         if live:
@@ -1779,6 +1783,13 @@ class WorkspaceTabView(QWidget):
 
     def on_history(self, events: list[dict], summary: dict) -> None:
         self.state.load_replay(events)
+        # Nút phải nói đúng chế độ: đang xem lại thì KHÔNG phải Live (event mới
+        # đang được giữ lại). Máy thật 29/09/2026: mở một nhóm tự replay mà nút
+        # vẫn hiện "● Live".
+        self.live_btn.blockSignals(True)
+        self.live_btn.setChecked(False)
+        self.live_btn.blockSignals(False)
+        self._update_live_label()
         if summary:
             self.status_label.setToolTip(json.dumps(summary, default=str))
         self.refresh_rows()
@@ -3391,6 +3402,7 @@ class OverviewTab(QWidget, I18nMixin):
         self._live_series: collections.deque = collections.deque(maxlen=60)
         self._live_curve = None
         try:
+            os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
             import pyqtgraph as pg
 
             self.live_plot = pg.PlotWidget()
@@ -3401,9 +3413,10 @@ class OverviewTab(QWidget, I18nMixin):
             self.bind(lambda: self.live_plot.setLabel("bottom", t("live.axis_seconds"), color=theme.TEXT_DIM))
             self._live_curve = self.live_plot.plot(pen=pg.mkPen(color=theme.ACCENT, width=2))
             layout.addWidget(self.live_plot)
-        except ImportError:
+        except ImportError as exc:
             fallback = QLabel()
-            self.bind(lambda lbl=fallback: lbl.setText(t("traffic.no_pyqtgraph")))
+            reason = str(exc)
+            self.bind(lambda lbl=fallback, r=reason: lbl.setText(t("traffic.no_pyqtgraph", reason=r)))
             layout.addWidget(fallback)
 
         live_tables = row_layout()

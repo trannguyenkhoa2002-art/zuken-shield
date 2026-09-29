@@ -42,7 +42,7 @@ def detail_text(event: dict) -> str:
 
 def status_text(tab: TabState, lang: str) -> str:
     parts = [_pick(_MODE.get(tab.mode, (tab.mode, tab.mode)), lang),
-             f"{len(tab.rows)} rows", f"{tab.matched} matched"]
+             f"{len(tab.rows)} rows", f"{tab.matched} live matched"]
     if tab.pending:
         parts.append(f"{len(tab.pending)} held")
     if tab.evicted:

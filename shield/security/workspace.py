@@ -223,13 +223,21 @@ def discover_groups(conn, now_ts: float | None = None, *, window_s: float = 8640
             "ON CONFLICT(source, kind) DO UPDATE SET last_seen=MAX(last_seen, excluded.last_seen), "
             "first_seen=MIN(first_seen, excluded.first_seen)", (source, kind, first, last))
     known = {(s, k): f for s, k, f in conn.execute("SELECT source, kind, first_seen FROM workspace_kinds")}
+    # Mốc bắt đầu theo dõi. Lần chạy ĐẦU không biết kind nào là mới — máy thật
+    # 29/09/2026 hiện mọi nhóm (kể cả file_write có từ hàng tháng) là "NEW".
+    # Nên "mới" = xuất hiện lần đầu SAU mốc này.
+    since_row = conn.execute("SELECT value FROM baseline WHERE key='workspace_kinds_since'").fetchone()
+    tracking_since = float(since_row[0]) if since_row else now_ts
+    if not since_row:
+        conn.execute("INSERT OR REPLACE INTO baseline (key, value, set_ts) VALUES "
+                     "('workspace_kinds_since', ?, ?)", (str(now_ts), now_ts))
     conn.commit()
     for source, kind, count, first, last in rows:
         first_ever = known.get((source, kind), first)
         groups.append({
             "group": "kind", "label": f"{kind} @ {source}", "count": int(count),
             "first_seen": float(first_ever), "last_seen": float(last),
-            "new": float(first_ever) >= now_ts - NEW_WINDOW_S,
+            "new": float(first_ever) >= max(now_ts - NEW_WINDOW_S, tracking_since),
             "filter": WorkspaceFilter(kinds=frozenset({kind}), sources=frozenset({source})).to_dict(),
         })
     for filter_type, graph_type in GRAPH_TYPES.items():
