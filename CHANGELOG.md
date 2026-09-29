@@ -5,7 +5,7 @@ and is not reproduced here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — internal package version `3.0.0a5`
+## [Unreleased] — internal package version `3.0.0a6`
 
 ### Added
 
@@ -33,6 +33,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Live workspace tabs blinked: every event cleared and rebuilt the table
+  (130 times in 15 s on the live agent) and dropped the selected row.
+- Investigation screens were partly English in the Vietnamese UI; an i18n
+  audit now runs in the test suite.
 - Found on the installed 3.0.0a4 and fixed in 3.0.0a5: a refused WAL
   checkpoint aborted a whole maintenance pass; the size cap stopped trimming
   events while any orphan edge remained (2,515 MiB used vs. a 2,048 MiB cap);
