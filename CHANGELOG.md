@@ -5,7 +5,7 @@ and is not reproduced here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — internal package version `3.0.0a3`
+## [Unreleased] — internal package version `3.0.0a4`
 
 ### Added
 

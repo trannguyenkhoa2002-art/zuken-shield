@@ -7,7 +7,7 @@
 # hai con số cho cùng một sản phẩm. Giao diện đọc file này nên nó hiển thị
 # "ver 1.1 RC" suốt cả hai vòng phát hành 2.0 — người dùng nhìn vào app và
 # thấy một phiên bản không tồn tại.
-__version__ = "3.0.0a3"
+__version__ = "3.0.0a4"
 __display_version__ = "3.0 Alpha 2"
 __creator__ = "Zuken"
 __product_name__ = "Zuken Shield"

@@ -14,4 +14,4 @@ liệu, không có capability token, không gọi được hành động phản 
 nhận lệnh nào từ lõi ngoài việc bị dừng.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
