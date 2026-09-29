@@ -5,7 +5,7 @@ and is not reproduced here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — internal package version `3.0.0a4`
+## [Unreleased] — internal package version `3.0.0a5`
 
 ### Added
 
@@ -33,6 +33,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Found on the installed 3.0.0a4 and fixed in 3.0.0a5: a refused WAL
+  checkpoint aborted a whole maintenance pass; the size cap stopped trimming
+  events while any orphan edge remained (2,515 MiB used vs. a 2,048 MiB cap);
+  stale health rows of removed collectors; an upgrade copied the database
+  twice; the traffic graph never rendered (missing `PySide6.QtOpenGL`); the
+  header showed the wrong version; workspace "NEW" badges and replay state.
 - **Port-scan detection went blind after an IP change.** The packet helper
   read its local addresses once at startup from `/etc/hosts` and the
   default route. It now reads every local address from the kernel and
