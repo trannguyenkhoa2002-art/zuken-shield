@@ -25,7 +25,8 @@ it can perform DNS lookups as part of monitoring.
 
 The agent does, for kernel telemetry and other privileged host observations —
 optional packet capture runs in its own `shield-packet-collector` service with a
-restricted capability set (the agent itself keeps root's capabilities). The desktop interface
+restricted capability set; the agent itself runs with a measured bounding set
+of 14 capabilities (see `docs/SECURITY_MODEL.md`). The desktop interface
 runs as your normal user and talks to the agent over a Unix socket. Actions that
 change system state go through a separate privileged helper with a fixed
 operation set, so the agent never runs arbitrary commands.

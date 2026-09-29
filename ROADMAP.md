@@ -35,9 +35,10 @@ These are the gaps that keep Beta 1.0 a beta.
 
 ## Response
 
-- Exercise the actions above `block_ip` — rate limiting, endpoint isolation,
-  process stop — in a disposable virtual machine, with rollback results
-  recorded for each.
+- Rate limiting, blocking and endpoint isolation now pass apply / verify /
+  rollback against real nftables in a disposable namespace
+  (`tests/test_response_e2e_netns.py`, `tests/test_isolation_netns.py`).
+  Still to do: process stop in a VM, and the same flows on real hosts.
 - Clearer operator preview of what an action will do before it runs.
 
 ## Evidence and reporting

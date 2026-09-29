@@ -25,8 +25,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Each phase passed `scripts/phase_gate.py`: acceptance tests pass on the phase
   and fail on the commit before it, ruff, mypy, full suite at `ulimit -n 1024`.
 
+- `CapabilityBoundingSet` for `shield-agent` (14 capabilities, no
+  `CAP_SYS_ADMIN`/`CAP_SETUID`/`CAP_SYS_MODULE`), measured with
+  `scripts/verify-agent-capabilities.py` and the real eBPF probes.
+- `tests/test_response_e2e_netns.py`: response apply / verify / rollback
+  against real nftables with the real privileged helper.
+
 ### Fixed
 
+- **Port-scan detection went blind after an IP change.** The packet helper
+  read its local addresses once at startup from `/etc/hosts` and the
+  default route. It now reads every local address from the kernel and
+  refreshes every 30 s.
+- `tests/test_portscan_netns.py` called a function removed long ago and had
+  never run (root-gated); rewritten for the current helper -> ingest pipeline.
 - Journal, syslog and probe stored the verbatim `message` in normalized data
   without secret redaction.
 - Near-misses could have been counted as detections by replay, assessment and

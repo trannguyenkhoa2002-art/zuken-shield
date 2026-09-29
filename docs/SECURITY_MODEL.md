@@ -13,10 +13,15 @@ refuses to do.
 | AI worker | unprivileged, isolated | dormant in Beta 1.0; see below |
 
 The agent is confined by its systemd unit: `MemoryMax=1G`, `TasksMax=512`,
-`NoNewPrivileges`, `ProtectSystem=full`, `RestrictSUIDSGID` and an address-family
-allowlist. It keeps root's capabilities: no `CapabilityBoundingSet` is applied
-to the agent yet. The restricted capability set (`CAP_NET_RAW`,
-`CAP_NET_ADMIN`) applies to the optional packet collector.
+`NoNewPrivileges`, `ProtectSystem=full`, `RestrictSUIDSGID`, an address-family
+allowlist and a `CapabilityBoundingSet` measured against the agent's real
+operations: network administration and raw sockets, low ports, eBPF
+(`CAP_BPF`, `CAP_PERFMON`, `CAP_SYS_RESOURCE`, `CAP_IPC_LOCK`), reading other
+processes (`CAP_SYS_PTRACE`, `CAP_DAC_READ_SEARCH`), file ownership fixes
+(`CAP_CHOWN`, `CAP_FOWNER`, `CAP_DAC_OVERRIDE`), `CAP_KILL` and `CAP_AUDIT_READ`.
+It cannot change user, load kernel modules, use raw I/O or `CAP_SYS_ADMIN`.
+`scripts/verify-agent-capabilities.py` re-checks this; the optional packet
+collector is narrower still (`CAP_NET_RAW`, `CAP_NET_ADMIN`).
 
 Desktop notifications do not cross a privilege boundary. The agent publishes
 redacted text on its IPC socket to clients that subscribe; `shield-notify`, a

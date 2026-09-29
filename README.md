@@ -195,9 +195,11 @@ walkthroughs from telemetry to incident report.
 
 - The **agent** runs as root for kernel telemetry and other privileged host
   observations. Its systemd unit sets `MemoryMax=1G`, `TasksMax=512`,
-  `NoNewPrivileges`, `ProtectSystem=full`, `RestrictSUIDSGID` and an
-  address-family allowlist. It does **not** drop root capabilities — no
-  `CapabilityBoundingSet` is applied to the agent today. It imports no
+  `NoNewPrivileges`, `ProtectSystem=full`, `RestrictSUIDSGID`, an
+  address-family allowlist, and a measured `CapabilityBoundingSet` of 14
+  capabilities — no `CAP_SYS_ADMIN`, `CAP_SETUID`, `CAP_SYS_MODULE` or
+  `CAP_SYS_RAWIO`. `scripts/verify-agent-capabilities.py` checks every
+  privileged operation the agent performs inside that set. It imports no
   packet-capture library.
 - **Packet capture is optional and lives outside the agent.** It runs in the
   separate `shield-packet-collector` service, with a restricted capability set
@@ -237,7 +239,9 @@ More: `docs/SECURITY_MODEL.md` and `docs/PRIVACY.md`.
 - Detection quality is measured on the developer's own environment. Your traffic
   will differ.
 - The interface is Vietnamese and English only.
-- Response actions beyond `block_ip` have had limited real-world exercise.
+- Response actions (`block_ip`, `rate_limit_ip`, `isolate_endpoint`) are
+  exercised end-to-end — apply, verify against nftables, roll back — in a
+  disposable network namespace, but have had limited use on production hosts.
 - Some scenarios are deterministic-report-only by design.
 - **Watchdog stability is not yet proven.** The Beta 1.0 startup fix did not
   hold: the developer's journal records 41 watchdog timeouts between the release
