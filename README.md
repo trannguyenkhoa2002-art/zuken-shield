@@ -18,7 +18,7 @@ completed long-duration soak testing. Treat it as software you evaluate in a lab
 you own, not as a product you place in front of something valuable.
 
 Product release: **Beta 1.0**
-Internal package version: **3.0.0a6** (this is what `dpkg` and `pip` report).
+Internal package version: **3.0.0a7** (this is what `dpkg` and `pip` report).
 Beta 1.0 was published under the previous alpha number; this version adds the
 post-release fixes listed under *Unreleased* in `CHANGELOG.md`.
 
