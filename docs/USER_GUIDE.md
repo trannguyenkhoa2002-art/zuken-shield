@@ -1,6 +1,6 @@
 # Zuken Shield — User and Operations Guide
 
-**Created by Zuken** · Version `3.0.0a8` · [Bản tiếng Việt](HUONG_DAN_SU_DUNG.md)
+**Created by Zuken** · Version `3.0.0a9` · [Bản tiếng Việt](HUONG_DAN_SU_DUNG.md)
 
 This is the complete guide: what Shield does, how to install and run it, how to
 work an alert, how to operate it in production, and how to test it before a
@@ -72,7 +72,7 @@ audit-only, a score at or above the threshold, and the exact rule in an allowlis
 
 ```bash
 cd ~/Desktop/"zuken shield"
-sudo apt install ./dist/shield-monitor_3.0.0a8_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a9_amd64.deb
 ```
 
 APT may need Internet access for missing system dependencies. Shield's own Python
@@ -82,13 +82,13 @@ code installs offline into `/opt/shield/.venv` and never touches PyPI.
 
 ```bash
 ./packaging/build-deb.sh
-sudo apt install ./dist/shield-monitor_3.0.0a8_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a9_amd64.deb
 ```
 
 Rebuilding without a version bump needs `--reinstall`:
 
 ```bash
-sudo apt install --reinstall ./dist/shield-monitor_3.0.0a8_amd64.deb
+sudo apt install --reinstall ./dist/shield-monitor_3.0.0a9_amd64.deb
 ```
 
 ### Verify
@@ -99,7 +99,7 @@ systemctl status shield-agent shield-privileged --no-pager
 journalctl -u shield-agent -n 50 --no-pager
 ```
 
-Expect `install ok installed 3.0.0a8`, both services `active`, and startup lines
+Expect `install ok installed 3.0.0a9`, both services `active`, and startup lines
 naming the collectors, database path and IPC socket. The installer runs its own
 health check and exits non-zero with logs if the services do not come up.
 
@@ -957,14 +957,14 @@ If `shield` is missing from your session's groups, log out and back in.
 **`No module named shield`** — the private virtualenv did not finish installing:
 
 ```bash
-sudo apt install --reinstall ./dist/shield-monitor_3.0.0a8_amd64.deb
+sudo apt install --reinstall ./dist/shield-monitor_3.0.0a9_amd64.deb
 /opt/shield/.venv/bin/python -c 'import shield; print(shield.__version__)'
 ```
 
 **Installation incomplete or dependencies failed**
 
 ```bash
-sudo apt install ./dist/shield-monitor_3.0.0a8_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a9_amd64.deb
 sudo dpkg --configure -a
 ```
 
