@@ -5,7 +5,7 @@ and is not reproduced here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — internal package version `3.0.0a9`
+## [Unreleased] — internal package version `3.0.0a10`
 
 ### Added
 
@@ -49,6 +49,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Agent killed by the watchdog during size-cap maintenance (found on 3.0.0a9).**
+  The graph orphan cleanup scanned the whole edge table three times per pass
+  (5.4 s each, holding the shared lock, thrashing the 1 GB cgroup's page
+  cache). Now cursor-bounded with index probes (pass 20.9 s -> 3.7 s) and
+  event trimming is chunked. Also: IPC client disconnects no longer log an
+  ERROR, and the Live workspace loads its groups on connect.
 - Live workspace tabs blinked: every event cleared and rebuilt the table
   (130 times in 15 s on the live agent) and dropped the selected row.
 - Investigation screens were partly English in the Vietnamese UI; an i18n
