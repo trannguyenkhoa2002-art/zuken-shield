@@ -31,6 +31,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `tests/test_response_e2e_netns.py`: response apply / verify / rollback
   against real nftables with the real privileged helper.
 
+### Added
+
+- Detection validation: 20 attack scenarios (SSH brute force, port scan,
+  ARP/DNS/DHCP MITM, deleted executable, backdoor listener, USB, FIM,
+  privilege escalation, a multi-step recon→SSH chain, and two below-threshold
+  cases) replayed through the real agent pipeline — detectors, Risk/Evidence
+  Confidence scoring, gray zone and correlation. 20/20 detected;
+  `scripts/detection-scenarios.py` emits an evidence report.
+
 ### Performance
 
 - Event pipeline 12.8x faster on real data (8.99 -> 0.70 ms/event, 6,000 real
