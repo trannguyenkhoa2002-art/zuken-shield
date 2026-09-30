@@ -37,6 +37,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "nav.workspace": ("Điều tra trực tiếp", "Live workspace"),
     "workspace.title": ("Điều tra trực tiếp", "Live workspace"),
     "workspace.groups": ("Nhóm tự phát hiện (nhấp đúp để mở)", "Discovered groups (double-click to open)"),
+    "workspace.loading_groups": ("Đang tải nhóm từ agent…", "Loading groups from the agent…"),
     "workspace.refresh_groups": ("Làm mới nhóm", "Refresh groups"),
     "workspace.new_tab": ("Tab mới…", "New tab…"),
     "workspace.too_many": ("Tối đa {max} tab. Đóng bớt một tab trước.", "At most {max} tabs. Close one first."),

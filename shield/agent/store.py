@@ -56,6 +56,8 @@ GRAPH_FIRST_ORPHAN_RATIO = 0.5
 # Con trỏ dọn graph, lưu trong `baseline` để một lần khởi động lại không làm
 # lượt quét quay về đầu bảng mãi mãi.
 GRAPH_PRUNE_CURSOR_KEY = "graph_prune_cursor"
+GRAPH_ENTITY_CURSOR_KEY = "graph_entity_prune_cursor"
+SIZE_CAP_DELETE_CHUNK = 1_000
 
 SCHEMA_VERSION = 11
 CONFIG_SCHEMA_VERSION = 1
@@ -2535,10 +2537,12 @@ class Store:
         luôn được quét vòng tròn, không có phần nào bị bỏ quên vĩnh viễn.
         """
         after = self.get_baseline(GRAPH_PRUNE_CURSOR_KEY) or ""
+        entity_after = self.get_baseline(GRAPH_ENTITY_CURSOR_KEY) or ""
         with self.conn:
             result = EvidenceGraph(self.conn).prune(
-                older_than_ts, max_edges=max_edges, after=after)
+                older_than_ts, max_edges=max_edges, after=after, entity_after=entity_after)
         self.set_baseline(GRAPH_PRUNE_CURSOR_KEY, result.get("next_cursor", ""))
+        self.set_baseline(GRAPH_ENTITY_CURSOR_KEY, result.get("next_entity_cursor", ""))
         return result
 
     def _compact(self, checkpoint: str | None, *, vacuum: bool = True) -> None:
@@ -2616,11 +2620,20 @@ class Store:
             if scanned and removed_edges / scanned >= GRAPH_FIRST_ORPHAN_RATIO:
                 self._compact("TRUNCATE")
                 break
-            with self.conn:
-                deleted = self.conn.execute(
-                    "DELETE FROM events WHERE id IN "
-                    "(SELECT id FROM events ORDER BY ts LIMIT ?)", (batch,)
-                ).rowcount
+            deleted = 0
+            # Chia nhỏ: mỗi đợt một transaction riêng, nhả khoá kết nối chung
+            # giữa các đợt để ping watchdog chen vào được. Đo trên DB thật: một
+            # câu xoá 50.000 event giữ khoá 2,1 giây; chia đợt 1.000 dòng: 0,04.
+            while deleted < batch:
+                with self.conn:
+                    step = self.conn.execute(
+                        "DELETE FROM events WHERE id IN "
+                        "(SELECT id FROM events ORDER BY ts LIMIT ?)",
+                        (min(SIZE_CAP_DELETE_CHUNK, batch - deleted),)
+                    ).rowcount
+                if not step:
+                    break
+                deleted += int(step)
             if not deleted:
                 break
             removed += deleted

@@ -1895,6 +1895,7 @@ class LiveWorkspaceTab(QWidget, I18nMixin):
         left.addWidget(self.groups_label)
         self.group_list = QListWidget()
         self.group_list.itemDoubleClicked.connect(self._open_group)
+        self.group_list.addItem(QListWidgetItem(t("workspace.loading_groups")))
         left.addWidget(self.group_list)
         self.refresh_btn = QPushButton()
         self.bind(lambda: self.refresh_btn.setText(t("workspace.refresh_groups")))
@@ -1934,7 +1935,10 @@ class LiveWorkspaceTab(QWidget, I18nMixin):
         return tab_id
 
     def _open_group(self, item: QListWidgetItem) -> None:
-        tab_id = self.open_filter(WorkspaceFilter.from_dict(item.data(Qt.ItemDataRole.UserRole) or {}))
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        if not payload:            # dòng "Đang tải…" không phải một nhóm
+            return
+        tab_id = self.open_filter(WorkspaceFilter.from_dict(payload))
         if tab_id:
             self.request_history(tab_id, 86400)
 
@@ -5342,6 +5346,7 @@ class MainWindow(QMainWindow):
             self._section_tabs.append(section_tabs)
             self.tabs.addTab(section_tabs, "")
         self.tabs.currentChanged.connect(self._update_page_header)
+        self.tabs.currentChanged.connect(self._refresh_workspace_if_shown)
         self._evidence_location = _locate_widget(self.tabs, self.evidence_tab)
 
         central = QWidget()
@@ -5433,6 +5438,11 @@ class MainWindow(QMainWindow):
                 select(inner)
         self.evidence_tab.open_event(event_id)
 
+    def _refresh_workspace_if_shown(self, _index: int = 0) -> None:
+        """Mở tab Điều tra: làm mới nhóm (mới xuất hiện từ lần xem trước)."""
+        if self.workspace_tab.isVisibleTo(self) and not self.workspace_tab._groups:
+            self.workspace_tab.refresh_groups()
+
     def _update_page_header(self, _index: int = 0) -> None:
         section_index = max(0, self.tabs.currentIndex())
         if section_index >= len(self._sections):
@@ -5498,6 +5508,10 @@ class MainWindow(QMainWindow):
         # Mất agent nghĩa là mọi con số trên màn hình đã ngừng cập nhật. Để
         # chúng đứng nguyên trông y hệt đang chạy — đó mới là chỗ nguy hiểm.
         self.overview_tab.mark_stale(not connected)
+        if connected:
+            # Nhóm của Live workspace suy ra từ telemetry: xin ngay khi nối được,
+            # thay vì để danh sách trống cho tới khi người dùng tự bấm "Làm mới".
+            self.workspace_tab.refresh_groups()
         self.connection_badge.style().unpolish(self.connection_badge)
         self.connection_badge.style().polish(self.connection_badge)
         self.status.showMessage(t("status.connected") if connected else t("status.disconnected"))

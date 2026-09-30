@@ -98,6 +98,9 @@ CREATE INDEX IF NOT EXISTS idx_evidence_ts ON evidence_objects(ts);
 # Giới hạn cứng cho mọi câu đọc. Mục 1.4: "Mỗi query phải có hard limit."
 MAX_LIMIT = 500
 MAX_EVIDENCE_REFS_PER_EDGE = 32
+# Số thực thể xét mồ côi mỗi lát dọn (chế độ có trần). Chi phí tỉ lệ với số
+# này, không với kích thước bảng cạnh — xem `_prune_orphan_entities`.
+GRAPH_ORPHAN_ENTITY_SCAN = 20_000
 # Trong 32 chỗ: giữ `ANCHOR` tham chiếu ĐẦU TIÊN (cạnh này bắt đầu từ đâu), phần
 # còn lại là tham chiếu MỚI NHẤT. Trước đây giữ 32 cái đầu tiên và bỏ mọi cái
 # sau: khi lưu trữ xoá các event cũ đó, cạnh không còn trỏ tới event nào —
@@ -387,8 +390,36 @@ class EvidenceGraph:
                 (str(entity_type),)).rowcount
         return {"entities_removed": int(removed or 0), "edges_removed": int(edges or 0)}
 
+    def _prune_orphan_entities(self, after: str, limit: int) -> tuple[int, str]:
+        """Xoá thực thể không còn cạnh, trong một cửa sổ `limit` thực thể có con trỏ.
+
+        Thay cho câu anti-join `NOT IN (SELECT src_id ... UNION SELECT dst_id ...)`
+        quét TOÀN BỘ bảng cạnh: đo trên DB thật, 5,4 giây mỗi lần và chạy 3 lần
+        mỗi lượt bảo trì, giữ khoá kết nối chung (ping watchdog phải chờ nó).
+        Dưới giới hạn bộ nhớ 1 GB của agent, lượt quét đó thrash page cache và
+        kéo dài hơn nhiều — agent bị watchdog kill lúc 17:32 ngày 30/09/2026.
+
+        Ở đây mỗi thực thể chỉ tốn hai lần tra index (`idx_graph_edges_src/dst`).
+        Trả về (số đã xoá, con trỏ tiếp theo; rỗng khi đã hết bảng).
+        """
+        ids = [row[0] for row in self.conn.execute(
+            "SELECT entity_id FROM graph_entities WHERE entity_id > ? ORDER BY entity_id LIMIT ?",
+            (str(after), int(limit))).fetchall()]
+        if not ids:
+            return 0, ""
+        removed = 0
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            marks = ",".join("?" * len(chunk))
+            removed += int(self.conn.execute(
+                f"DELETE FROM graph_entities WHERE entity_id IN ({marks}) "
+                "AND NOT EXISTS (SELECT 1 FROM graph_edges e WHERE e.src_id = graph_entities.entity_id) "
+                "AND NOT EXISTS (SELECT 1 FROM graph_edges e WHERE e.dst_id = graph_entities.entity_id)",
+                chunk).rowcount or 0)
+        return removed, (ids[-1] if len(ids) >= limit else "")
+
     def prune(self, older_than_ts: float = 0.0, *, max_edges: int = 0,
-              after: str = "") -> dict:
+              after: str = "", entity_after: str = "") -> dict:
         """Gỡ mọi cạnh không còn bằng chứng, rồi gỡ node treo.
 
         Gọi SAU khi `Store.maintain()` đã cắt bảng `events` theo hạn lưu trữ.
@@ -458,14 +489,22 @@ class EvidenceGraph:
         # database production, và chạy nó khi không có gì đổi là trả một giây
         # đó ra để nhận về con số 0.
         removed_entities = 0
-        if removed_edges or removed_evidence:
+        entity_cursor = ""
+        if max_edges > 0:
+            # Chế độ có trần (bảo trì nền): chỉ xét một cửa sổ thực thể, LUÔN
+            # chạy — cũng dọn được phần mồ côi tồn từ trước, không chỉ những gì
+            # lát này vừa làm mồ côi.
+            removed_entities, entity_cursor = self._prune_orphan_entities(
+                entity_after, GRAPH_ORPHAN_ENTITY_SCAN)
+        elif removed_edges or removed_evidence:
             removed_entities = self.conn.execute(
                 "DELETE FROM graph_entities WHERE entity_id NOT IN "
                 "(SELECT src_id FROM graph_edges UNION SELECT dst_id FROM graph_edges)"
             ).rowcount
         return {"evidence_removed": removed_evidence, "edges_removed": removed_edges,
                 "entities_removed": removed_entities, "edges_scanned": scanned,
-                "next_cursor": "" if complete else cursor, "complete": complete}
+                "next_cursor": "" if complete else cursor, "complete": complete,
+                "next_entity_cursor": entity_cursor}
 
 
 def _entity_row(row) -> dict:

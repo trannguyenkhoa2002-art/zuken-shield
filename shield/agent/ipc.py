@@ -205,7 +205,7 @@ class IpcServer:
                 msg["_peer"] = peer
                 if self._on_command is not None:
                     await self._on_command(msg)
-        except (ConnectionResetError, asyncio.IncompleteReadError, ValueError):
+        except (ConnectionError, asyncio.IncompleteReadError, ValueError):
             pass
         finally:
             if writer in self._writers:
@@ -223,7 +223,7 @@ class IpcServer:
             writer.write(payload)
             await writer.drain()
             return True
-        except (ConnectionResetError, BrokenPipeError):
+        except ConnectionError:
             return False
 
     async def send_desktop_notification(self, payload: dict) -> int:
@@ -251,7 +251,7 @@ class IpcServer:
             try:
                 w.write(payload)
                 await w.drain()
-            except (ConnectionResetError, BrokenPipeError):
+            except ConnectionError:
                 dead.append(w)
         for w in dead:
             if w in self._writers:
