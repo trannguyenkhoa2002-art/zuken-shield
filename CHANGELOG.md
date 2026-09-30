@@ -40,6 +40,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Confidence scoring, gray zone and correlation. 20/20 detected;
   `scripts/detection-scenarios.py` emits an evidence report.
 
+### Diagnostics
+
+- Structured `event key=value` log lines: `agent_starting` banner,
+  `heartbeat` every 10 min, `maintenance_pass` with per-step timings and DB
+  vs. cap, `alert` with rule/risk/confidence/subject/id.
+- The shared database lock is now tracked: `slow_sql`, `lock_held_long`,
+  `watchdog_ping_slow` (names who holds the lock and doing what) and
+  `event_loop_lag` make a watchdog kill self-explaining.
+- Repeated desktop-notification warnings collapse to one line per 10 minutes.
+- Millisecond timestamps and padded levels. See `docs/TROUBLESHOOTING.md`.
+
 ### Performance
 
 - Event pipeline 12.8x faster on real data (8.99 -> 0.70 ms/event, 6,000 real

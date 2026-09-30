@@ -18,13 +18,13 @@ import logging
 import re
 import sqlite3
 import secrets
-import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from shield.common import sdnotify
+from shield.common.diaglog import LockSnapshot, RateLimiter, TrackedRLock, event
 from shield.common.models import Alert, Event
 from shield.ai.audit import AI_AUDIT_INDEXES, AI_AUDIT_SCHEMA
 from shield.ai.chat import CHAT_SCHEMA
@@ -37,6 +37,31 @@ from shield.security.workspace import WORKSPACE_SCHEMA
 from shield.security.knowledge import KNOWLEDGE_INDEXES, KNOWLEDGE_SCHEMA
 
 logger = logging.getLogger("shield.store")
+
+# Ngưỡng ghi log chẩn đoán (giây). Đặt bằng môi trường để chỉnh mà không sửa mã.
+def _env_seconds(name: str, default: float) -> float:
+    try:
+        return max(0.05, float(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+SLOW_SQL_S = _env_seconds("SHIELD_SLOW_SQL_S", 1.0)
+SLOW_LOCK_HOLD_S = _env_seconds("SHIELD_SLOW_LOCK_HOLD_S", 1.0)
+_SLOW_LOG = RateLimiter(interval_s=30.0)
+
+
+def _sql_preview(sql: str, limit: int = 110) -> str:
+    return " ".join(sql.split())[:limit]
+
+
+def _log_slow_hold(snapshot: LockSnapshot) -> None:
+    """Một luồng giữ khoá kết nối chung quá lâu — ping watchdog phải chờ nó."""
+    allowed, suppressed = _SLOW_LOG.allow("lock_held_long")
+    if allowed:
+        logger.warning(event("lock_held_long", held_s=snapshot.held_for_s, thread=snapshot.thread,
+                             doing=snapshot.label, threshold_s=SLOW_LOCK_HOLD_S,
+                             suppressed=suppressed or None))
 
 # --- Trần công việc cho MỘT lượt bảo trì ---
 #
@@ -535,7 +560,7 @@ class _ThreadSafeConnection:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        self._lock = threading.RLock()
+        self._lock = TrackedRLock(slow_hold_s=SLOW_LOCK_HOLD_S, on_slow_hold=_log_slow_hold)
         self._restore_normal = False
 
     def durable_commit(self) -> None:
@@ -582,19 +607,41 @@ class _ThreadSafeConnection:
         finally:
             self._lock.release()
 
+    def lock_snapshot(self) -> LockSnapshot:
+        return self._lock.snapshot()
+
+    def drain_lock_stats(self) -> dict:
+        return self._lock.drain_stats()
+
+    def _timed(self, sql: str, run):
+        started = time.monotonic()
+        self._lock.label(_sql_preview(sql))
+        result = run()
+        took = time.monotonic() - started
+        if took >= SLOW_SQL_S:
+            allowed, suppressed = _SLOW_LOG.allow("slow_sql:" + _sql_preview(sql, 60))
+            if allowed:
+                logger.warning(event("slow_sql", took_s=took, sql=_sql_preview(sql),
+                                     threshold_s=SLOW_SQL_S, suppressed=suppressed or None))
+        return result
+
     def execute(self, sql: str, params=()) -> _Result:
         with self._lock:
-            cursor = self._conn.execute(sql, params)
-            return _Result(cursor.fetchall(), cursor.rowcount)
+            def run() -> _Result:
+                cursor = self._conn.execute(sql, params)
+                return _Result(cursor.fetchall(), cursor.rowcount)
+            return self._timed(sql, run)
 
     def executemany(self, sql: str, params) -> _Result:
         with self._lock:
-            cursor = self._conn.executemany(sql, params)
-            return _Result(cursor.fetchall(), cursor.rowcount)
+            def run() -> _Result:
+                cursor = self._conn.executemany(sql, params)
+                return _Result(cursor.fetchall(), cursor.rowcount)
+            return self._timed(sql, run)
 
     def executescript(self, script: str) -> None:
         with self._lock:
-            self._conn.executescript(script)
+            self._timed(script, lambda: self._conn.executescript(script))
 
     def commit(self) -> None:
         with self._lock:
@@ -603,6 +650,7 @@ class _ThreadSafeConnection:
 
     def backup(self, target: sqlite3.Connection) -> None:
         with self._lock:
+            self._lock.label("sqlite backup")
             self._conn.backup(target)
 
     def close(self) -> None:
