@@ -65,16 +65,19 @@ from shield.ai.audit import InvestigationAudit
 from shield.response.jobs import ResponseJobStore, TransitionError
 from shield.agent.log_export import ExportConfig, LogExporter
 from shield.agent.problems import ProblemReporter, detect_problems, problem_to_alert, resolved_message
-from shield.agent.store import Store
+from shield.agent.store import GraphIngestError, Store
 from shield.agent import switch
 from shield.agent.switch import ALL, MAX_PAUSE_S, MonitoringSwitch, set_switch
 from shield.assessment.exporters import coverage
 from shield.assessment.models import AssessmentProfile
 from shield.assessment.runner import AssessmentRunner
 from shield.common import sdnotify
+from shield.common.diaglog import (cgroup_memory_mb, configure_logging, event,
+                                   process_rss_mb, wal_size_mb)
 from shield.common.models import Alert, Event, now
 from shield.security import PolicyEngine, RiskScorer
 from shield.security.policy import PolicyConfig
+from shield.security import gray_zone, workspace
 from shield.security.scoring import RiskContext
 from shield.security import trust
 from shield.security.correlation import CorrelationEngine, CorrelationRule
@@ -224,6 +227,39 @@ async def reconcile_isolation_on_start(
     store.add_audit_log("isolation_orphan_release", {"ok": ok}, message)
 
 
+WATCHDOG_SLOW_PING_S = 2.0
+
+
+async def check_store_alive(store: Store, slow_after_s: float = WATCHDOG_SLOW_PING_S) -> bool:
+    """Hỏi store một câu rẻ. Nếu chậm hơn `slow_after_s`, GHI AI đang giữ khoá.
+
+    Ping watchdog phải chờ khoá kết nối DB dùng chung. Ngày 30/09/2026 agent bị
+    kill mà log không có dòng nào giải thích vì sao; giờ khi chờ lâu, dòng
+    `watchdog_ping_slow` nêu luồng đang giữ khoá, giữ bao lâu và đang chạy câu
+    SQL nào — và `watchdog_ping_recovered` cho biết tổng thời gian chờ.
+    """
+    started = time.monotonic()
+    task = asyncio.ensure_future(asyncio.to_thread(store.get_baseline, "config_schema_version"))
+    try:
+        done, _pending = await asyncio.wait({task}, timeout=slow_after_s)
+        if not done:
+            holder = store.conn.lock_snapshot()
+            logger.warning(event(
+                "watchdog_ping_slow", waited_s=time.monotonic() - started,
+                lock_held=holder.held, holder_thread=holder.thread or None,
+                holder_held_s=holder.held_for_s if holder.held else None,
+                holder_doing=holder.label or None,
+                systemd_deadline_s=sdnotify.watchdog_interval_s() * 2 or None))
+            await task
+            logger.warning(event("watchdog_ping_recovered", waited_s=time.monotonic() - started))
+        else:
+            task.result()
+        return True
+    except Exception:  # noqa: BLE001 — store hỏng thì ĐỪNG ping, để systemd restart
+        logger.exception("watchdog_ping_failed store không trả lời — bỏ qua lần ping này")
+        return False
+
+
 async def watchdog_loop(store: Store) -> None:
     """Ping systemd để `WatchdogSec=` phát hiện agent TREO.
 
@@ -236,12 +272,7 @@ async def watchdog_loop(store: Store) -> None:
 
     async def alive() -> bool:
         """Store có trả lời không. Đây là thứ làm cái ping CÓ NGHĨA."""
-        try:
-            await asyncio.to_thread(store.get_baseline, "config_schema_version")
-            return True
-        except Exception:  # noqa: BLE001 — store hỏng thì ĐỪNG ping, để systemd restart
-            logger.exception("Watchdog: store không trả lời — bỏ qua lần ping này")
-            return False
+        return await check_store_alive(store)
 
     # Ping NGAY, trước khi ngủ lần đầu.
     #
@@ -280,10 +311,15 @@ async def watchdog_loop(store: Store) -> None:
             # báo READY để systemd không giết agent vì quá hạn khởi động.
             sdnotify.notify("READY=1")
         return
-    logger.info("Watchdog systemd: ping mỗi %.0f giây", interval)
+    logger.info(event("watchdog_started", ping_every_s=interval, kill_after_s=interval * 2))
 
     while True:
+        slept_from = time.monotonic()
         await asyncio.sleep(interval)
+        # Event loop trễ: `sleep` xong muộn hơn hẹn nghĩa là có gì đó chiếm loop.
+        lag = time.monotonic() - slept_from - interval
+        if lag > WATCHDOG_SLOW_PING_S:
+            logger.warning(event("event_loop_lag", lag_s=lag, expected_s=interval))
         if await alive():
             if not ready_sent:
                 sdnotify.notify("READY=1")
@@ -320,6 +356,8 @@ async def run_alert_consumer(alert_bus: Bus, store: Store, ipc: IpcServer,
     correlations = CorrelationEngine(
         CorrelationRule.load_all(correlation_path, correlation_key)
     )
+    gray_store = gray_zone.GrayZoneStore(store.conn)
+    gray_thresholds = gray_zone.GrayThresholds.from_env()
     while True:
         alert: Alert = await q.get()
         alert = enrich_alert(alert)
@@ -329,7 +367,10 @@ async def run_alert_consumer(alert_bus: Bus, store: Store, ipc: IpcServer,
         context = RiskContext.from_dict(
             await asyncio.to_thread(store.risk_context, alert.subject)
         )
-        assessment = scorer.assess(alert, context)
+        # Fact lịch sử cho Evidence Confidence (đăng nhập thành công sau brute
+        # force, DNS đổi gần lúc MITM...). Cùng lý do đọc trong thread.
+        store_facts = await asyncio.to_thread(store.evidence_facts, alert)
+        assessment = scorer.assess(alert, context, store_facts)
         decision = policy.decide(alert.rule_id, assessment.score)
         # Phase 0 (mục 0.3): policy sinh ĐỀ XUẤT, chưa thực thi. Proposal có ID
         # riêng, TTL, evidence và luôn requires_human=True — không có đường nào
@@ -352,12 +393,27 @@ async def run_alert_consumer(alert_bus: Bus, store: Store, ipc: IpcServer,
             evidence=evidence,
             risk_score=assessment.score,
             evidence_strength=assessment.evidence_strength,
+            evidence_confidence=assessment.evidence_confidence.score,
+            evidence_assessment=assessment.evidence_confidence.to_dict(),
             policy_action="suppressed" if suppression else decision.action,
         )
         is_assessment = bool(alert.evidence.get("assessment_id"))
+        if gray_zone.is_candidate_only(alert) and not is_assessment:
+            # Near-miss của detector: vào vùng xám cho người phân tích thấy,
+            # nhưng KHÔNG thành alert, không thông báo, không correlation.
+            kind, reason = gray_zone.classify(
+                alert, suppressed_reason=None, thresholds=gray_thresholds) or ("below_threshold", "")
+            entry = await asyncio.to_thread(gray_store.record, alert, kind, reason)
+            await ipc.broadcast("gray_zone_updated", {"entry": entry})
+            continue
         # Assessment vẫn ép 0: event tổng hợp phải hiện đủ, không gộp.
-        store.insert_alert(
+        stored = store.insert_alert(
             alert, dedupe_window_s=0 if is_assessment else (alert.dedupe_window_s or 300))
+        gray = None if is_assessment else gray_zone.classify(
+            stored, suppressed_reason=suppression, thresholds=gray_thresholds)
+        if gray is not None:
+            entry = await asyncio.to_thread(gray_store.record, stored, *gray)
+            await ipc.broadcast("gray_zone_updated", {"entry": entry})
         if trust.may_enter_forensic_ledger(alert):
             store.add_forensic_record("alert", alert.to_dict())
         store.add_audit_log(
@@ -370,7 +426,12 @@ async def run_alert_consumer(alert_bus: Bus, store: Store, ipc: IpcServer,
                                 "PROPOSED (chờ người duyệt; Phase 0 không tự thực thi)")
         if not is_assessment and not suppression:
             await ipc.broadcast("alert", alert.to_dict())
-        logger.info("Alert: [%s] %s (%s)", alert.severity, alert.title, alert.subject)
+        logger.info(event(
+            "alert", id=stored.alert_id or None, rule=alert.rule_id, severity=alert.severity,
+            risk=alert.risk_score, confidence=alert.evidence_confidence,
+            subject=alert.subject, action=alert.policy_action, count=None,
+            gray=gray[0] if gray else None,
+            suppressed=suppression or None, title=alert.title))
         if exporter_box is not None:
             exporter = exporter_box["exporter"]
             if exporter.config.include_alerts and exporter.directory is not None:
@@ -482,7 +543,10 @@ async def run_event_consumer(
     graph_failures = 0
     while True:
         ev: Event = await q.get()
-        store.insert_event(ev)
+        # Event + graph trong MỘT commit (Store.ingest_event): đo trên bản sao
+        # DB thật, mỗi event từng tốn ~2,4 commit. Event luôn được lưu; lỗi
+        # graph được ném lại sau commit dưới dạng GraphIngestError.
+        #
         # Evidence graph (kế hoạch 2.0 mục 1.3). Chạy trong thread riêng: nó
         # ghi nhiều dòng cho mỗi event, và chặn event loop ở đây nghĩa là mọi
         # collector đứng chờ SQLite.
@@ -491,9 +555,9 @@ async def run_event_consumer(
         # nó hỏng thì detection hiện có vẫn phải chạy nguyên vẹn — cùng nguyên
         # tắc với AI ở Phase 2, và nó áp dụng ngay từ bây giờ.
         try:
-            await asyncio.to_thread(store.graph_ingest_event, ev)
+            await asyncio.to_thread(store.ingest_event, ev)
             graph_failures = 0
-        except (sqlite3.DatabaseError, ValueError) as exc:
+        except GraphIngestError as exc:
             graph_failures += 1
             logger.warning("Không dựng được evidence graph cho %s/%s: %s",
                            ev.source, ev.kind, exc)
@@ -532,6 +596,70 @@ async def run_event_consumer(
 # Nhịp bảo trì. Một lượt bị chặn trần (xem `SIZE_CAP_MAX_BATCHES`), nên khi còn
 # backlog phải quay lại sớm — bằng không việc chặn trần chỉ biến một lần treo
 # dài thành một đống rác không bao giờ dọn hết.
+HEARTBEAT_INTERVAL_S = 600.0
+
+
+def _capability_summary() -> str:
+    """Số và tên capability trong bounding set của tiến trình (đọc /proc)."""
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("CapBnd:"):
+                mask = int(line.split()[1], 16)
+                return f"{bin(mask).count('1')}_caps mask=0x{mask:x}"
+    except (OSError, ValueError):
+        pass
+    return "unknown"
+
+
+def log_startup_banner(store: Store, args: argparse.Namespace) -> None:
+    """MỘT dòng nói agent đang chạy mã nào, trên dữ liệu nào, với giới hạn nào."""
+    import platform
+
+    from shield import __version__
+
+    memory_now, memory_max = cgroup_memory_mb()
+    stats = store.database_stats()
+    enabled = [flag for flag in ("discover", "mitm", "portscan", "dns", "journal", "endpoint")
+               if getattr(args, flag, False)]
+    logger.info(event(
+        "agent_starting", version=__version__, python=platform.python_version(), pid=os.getpid(),
+        uid=os.geteuid(), db=str(store.path), db_file_mb=stats["database_bytes"] / 2**20,
+        db_used_mb=store.database_used_bytes() / 2**20, wal_mb=wal_size_mb(str(store.path)),
+        schema=stats["schema_version"], memory_limit_mb=memory_max or None,
+        capabilities=_capability_summary(), collectors=",".join(enabled) or "none",
+        fim_paths=len(args.fim_path), watchdog_s=sdnotify.watchdog_interval_s() * 2 or None,
+        recovered_db=bool(store.recovery)))
+
+
+async def heartbeat_loop(store: Store, event_bus: Bus, alert_bus: Bus,
+                         interval_s: float = HEARTBEAT_INTERVAL_S) -> None:
+    """Mỗi `interval_s` một dòng sức khoẻ: đủ để dựng lại tình trạng TRƯỚC một sự cố.
+
+    Sự cố 30/09/2026 (agent bị kill lúc 17:32) không để lại dấu vết về lượng
+    event, hàng đợi, bộ nhớ hay WAL trước đó — những số này phải đo lại bằng tay.
+    """
+    started = time.monotonic()
+    last_published, last_at = event_bus.published, started
+    while True:
+        await asyncio.sleep(interval_s)
+        current = time.monotonic()
+        published = event_bus.published
+        rate = (published - last_published) / max(1e-9, current - last_at)
+        last_published, last_at = published, current
+        memory_now, memory_max = cgroup_memory_mb()
+        lock = store.conn.drain_lock_stats()
+        logger.info(event(
+            "heartbeat", uptime_s=current - started, events_per_s=rate,
+            queue_events=sum(q.qsize() for q in event_bus._subscribers),
+            queue_alerts=sum(q.qsize() for q in alert_bus._subscribers),
+            dropped_events=event_bus.dropped, dropped_alerts=alert_bus.dropped,
+            rss_mb=process_rss_mb(), cgroup_mb=memory_now or None, cgroup_limit_mb=memory_max or None,
+            db_used_mb=store.database_used_bytes() / 2**20, wal_mb=wal_size_mb(str(store.path)),
+            lock_max_wait_s=lock["max_wait_s"], lock_max_hold_s=lock["max_hold_s"],
+            lock_slow_holds=lock["slow_holds"]))
+
+
+MAINTENANCE_SLOW_PASS_S = 15.0
 MAINTENANCE_INTERVAL_S = 6 * 3600
 MAINTENANCE_BUSY_INTERVAL_S = 60
 INTEGRITY_CHECK_INTERVAL_S = 86400
@@ -548,25 +676,35 @@ def backup_keep_count() -> int:
 async def maintenance_loop(store: Store, alert_bus: Bus) -> None:
     """Retention, integrity, and daily backup without pruning forensic evidence."""
     policy = RetentionPolicy.from_env()
+    pass_number = 0
     while True:
+        pass_number += 1
+        pass_started = time.monotonic()
+        steps: dict[str, float] = {}
         try:
+            step_started = time.monotonic()
             result = await asyncio.to_thread(
                 store.maintain, policy.event_days, policy.alert_days, policy.snapshot_days,
                 policy.database_max_bytes,
             )
+            steps["retention_and_size_cap"] = time.monotonic() - step_started
+            step_started = time.monotonic()
             pcap_dir = Path(os.environ.get("SHIELD_PCAP_DIR", "/var/lib/shield/pcaps"))
             result["pcap"] = await asyncio.to_thread(
                 prune_managed_files, pcap_dir, retention_days=policy.pcap_days,
                 maximum_bytes=policy.pcap_max_bytes,
             )
+            steps["pcap_prune"] = time.monotonic() - step_started
             # integrity_check đọc TOÀN BỘ file (~19 giây trên 2,5 GB, cache
             # nóng). Trước đây nó chạy ở MỌI lượt — kể cả các lượt "còn việc"
             # cách nhau một phút — và trên kết nối chung, tức giữ khoá mà ping
             # watchdog cần. Giờ: kết nối đọc riêng, tối đa một lần mỗi ngày.
             last_integrity = float(store.get_baseline("database_last_integrity_check") or 0)
             if time.time() - last_integrity >= INTEGRITY_CHECK_INTERVAL_S:
+                step_started = time.monotonic()
                 integrity_ok, integrity_message = await asyncio.to_thread(
                     store.check_integrity, separate_connection=True)
+                steps["integrity_check"] = time.monotonic() - step_started
                 store.set_baseline("database_last_integrity_check", str(time.time()))
                 store.set_system_health(
                     "database_integrity", 1 if integrity_ok else 0, "boolean",
@@ -583,18 +721,44 @@ async def maintenance_loop(store: Store, alert_bus: Bus) -> None:
             automatic_backup = store.get_baseline("automatic_backup_enabled") != "0"
             last_backup = float(store.get_baseline("database_last_backup") or 0)
             if automatic_backup and time.time() - last_backup >= 86400:
-                # Dọn TRƯỚC khi chép: file tạm bỏ dở của lượt bị giết và các
-                # bản cũ vượt số lượng giữ lại, để lượt chép mới có chỗ.
+                backup_path = store.path.parent / "backups" / f"shield-{int(time.time())}.db"
+                step_started = time.monotonic()
+                await asyncio.to_thread(store.backup_database, backup_path)
+                steps["backup"] = time.monotonic() - step_started
+                logger.info(event("backup_written", path=str(backup_path),
+                                  size_mb=backup_path.stat().st_size / 2**20,
+                                  took_s=steps["backup"]))
+                # Dọn SAU khi chép xong: dọn trước thì luôn còn keep+1 bản (đo
+                # được trên máy thật: 4 bản với SHIELD_BACKUP_KEEP=3), và nếu
+                # lượt chép hỏng thì ta đã xoá mất một bản tốt trước khi có bản
+                # thay thế.
                 pruned = await asyncio.to_thread(store.prune_backups, backup_keep_count())
                 if pruned["deleted"] or pruned["temporary_deleted"]:
-                    logger.info("Dọn sao lưu cũ: %s", pruned)
-                backup_path = store.path.parent / "backups" / f"shield-{int(time.time())}.db"
-                await asyncio.to_thread(store.backup_database, backup_path)
+                    logger.info(event("backups_pruned", deleted=pruned["deleted"],
+                                      temporary_removed=pruned["temporary_deleted"],
+                                      freed_mb=pruned["freed_bytes"] / 2**20,
+                                      keep=backup_keep_count()))
                 store.set_baseline("database_last_backup", str(time.time()))
                 store.set_system_health("last_backup", time.time(), "unix_ts", "healthy", str(backup_path))
             checkpoint_path = Path(os.environ.get("SHIELD_FORENSIC_CHECKPOINT", str(store.path) + ".checkpoint.json"))
             await asyncio.to_thread(store.create_forensic_checkpoint, checkpoint_path)
-            logger.info("Database maintenance: %s", result)
+            used_mb = store.database_used_bytes() / 2**20
+            cap_mb = policy.database_max_bytes / 2**20
+            total_s = time.monotonic() - pass_started
+            logger.log(
+                logging.WARNING if total_s > MAINTENANCE_SLOW_PASS_S else logging.INFO,
+                event(
+                    "maintenance_pass", n=pass_number, took_s=total_s,
+                    result="draining" if result.get("more_work") else "clean",
+                    events_deleted=result.get("events_deleted"),
+                    events_trimmed_for_size=result.get("events_trimmed_for_size"),
+                    alerts_deleted=result.get("alerts_deleted"),
+                    graph_edges_deleted=result.get("graph_edges_deleted"),
+                    graph_entities_deleted=result.get("graph_entities_deleted"),
+                    db_used_mb=used_mb, db_cap_mb=cap_mb, over_cap=used_mb > cap_mb,
+                    wal_mb=wal_size_mb(str(store.path)),
+                    steps=",".join(f"{k}:{v:.2f}s" for k, v in steps.items()) or None,
+                    next_in_s=MAINTENANCE_BUSY_INTERVAL_S if result.get("more_work") else MAINTENANCE_INTERVAL_S))
             store.set_system_health(
                 "maintenance", 1, "boolean",
                 "draining" if result.get("more_work") else "healthy",
@@ -607,7 +771,10 @@ async def maintenance_loop(store: Store, alert_bus: Bus) -> None:
             # thật, cho tới khi một lần khởi động lại phải dọn tất cả cùng lúc
             # và bị systemd giết. Đánh dấu còn việc để lượt sau quay lại sớm.
             store.set_system_health("maintenance", 0, "boolean", "failed", str(exc)[:1000])
-            logger.exception("Database maintenance failed")
+            logger.exception(event(
+                "maintenance_failed", n=pass_number, took_s=time.monotonic() - pass_started,
+                error=type(exc).__name__, steps_done=",".join(steps) or "none",
+                lock_holder=store.conn.lock_snapshot().label or None))
             backlog = True
         # Còn việc thì quay lại sau MỘT PHÚT, không phải sáu tiếng.
         await asyncio.sleep(MAINTENANCE_BUSY_INTERVAL_S if backlog else MAINTENANCE_INTERVAL_S)
@@ -2537,6 +2704,90 @@ async def handle_command(
         payload["request_id"] = msg.get("request_id")
         await ipc.send_to(client_id, cmd + "_result", payload)
 
+    elif cmd == "workspace_groups":
+        # Nhóm cho Live Workspace, suy ra từ telemetry — không danh sách viết cứng.
+        groups = await asyncio.to_thread(workspace.discover_groups, store.conn)
+        await ipc.send_to(client_id, "workspace_groups", {"request_id": request_id, "groups": groups})
+
+    elif cmd == "workspace_history":
+        # Replay cho MỘT tab: lịch sử khớp bộ lọc của tab, cũ nhất trước.
+        # Thực thể có trong evidence graph -> vòng đời qua graph (không trần 7
+        # ngày); còn lại -> search_events trong cửa sổ đã chọn (tối đa 7 ngày).
+        # Cả hai đều đi qua EvidenceQueries: có deadline, che bí mật, audit.
+        from shield.evidence.queries import EvidenceQueries, QueryTimeout
+        try:
+            flt = workspace.WorkspaceFilter.from_dict(msg.get("filter") or {})
+            window_s = max(60.0, min(float(msg.get("window_s", 3600) or 3600), 7 * 86400.0))
+            queries = EvidenceQueries(store.conn, caller=f"workspace:{principal}")
+            summary: dict = {}
+            if flt.entity_type in workspace.GRAPH_TYPES:
+                history = await asyncio.to_thread(
+                    queries.entity_history, flt.entity_type, flt.entity_value, 1000)
+                events, summary = history["events"], history["summary"]
+            else:
+                now_ts = time.time()
+                page = await asyncio.to_thread(
+                    lambda: queries.search_events(
+                        start_time=now_ts - window_s, end_time=now_ts,
+                        kind=next(iter(flt.kinds)) if len(flt.kinds) == 1 else "",
+                        source=next(iter(flt.sources)) if len(flt.sources) == 1 else "",
+                        limit=1000))
+                events = page["events"]
+            events = [event for event in events if flt.matches(event)]
+        except (ValueError, TypeError, QueryTimeout) as exc:
+            await ipc.send_to(client_id, "command_error", {"cmd": cmd, "error": str(exc)})
+            return
+        await ipc.send_to(client_id, "workspace_history", {
+            "request_id": request_id, "tab_id": str(msg.get("tab_id", ""))[:32],
+            "filter": flt.to_dict(), "summary": summary,
+            "events": sorted(events, key=lambda e: (e["ts"], e.get("row_id", 0)))})
+
+    elif cmd == "gray_zone_list":
+        wanted = msg.get("state", "open")
+        wanted = wanted if wanted in ("open", "promoted", "dismissed", None) else "open"
+        entries = await asyncio.to_thread(
+            gray_zone.GrayZoneStore(store.conn).entries, wanted, int(msg.get("limit", 200) or 200))
+        await ipc.send_to(client_id, "gray_zone_list", {"request_id": request_id, "entries": entries})
+
+    elif cmd == "gray_zone_decide":
+        # Quyết định của NGƯỜI qua giao diện: principal lấy từ SO_PEERCRED của
+        # kết nối IPC, không từ nội dung lệnh. Không có đường nào khác tới đây.
+        gray_store = gray_zone.GrayZoneStore(store.conn)
+        entry_id = str(msg.get("entry_id", ""))
+        decision = str(msg.get("decision", ""))
+        note = str(msg.get("note", ""))
+        try:
+            entry = gray_store.get(entry_id)
+            if entry is None:
+                raise ValueError("gray-zone entry not found")
+            incident_id = ""
+            if decision == "promote" and entry["state"] == "open":
+                incident = store.open_or_update_incident(
+                    correlation_id=f"ANALYST_PROMOTED:{entry['rule_id']}",
+                    subject=entry["subject"], title=entry["title"],
+                    severity="warning", risk_score=int(entry["risk_score"]),
+                    evidence_strength=max(0, int(entry["evidence_confidence"])) / 100,
+                    reason={
+                        "reason_kind": "analyst_promoted", "rule_id": entry["rule_id"],
+                        "subject": entry["subject"], "observed_count": int(entry["count"]),
+                        "first_contributing_ts": float(entry["first_seen"]),
+                        "last_contributing_ts": float(entry["last_seen"]),
+                    },
+                    asset_refs=store.entity_ids_for_key(entry["subject"]),
+                )
+                incident_id = str(incident["incident_id"])
+            decided = gray_store.decide(entry_id, decision, principal=principal, note=note,
+                                        incident_id=incident_id)
+        except ValueError as exc:
+            await ipc.send_to(client_id, "command_error", {"cmd": cmd, "error": str(exc)})
+            return
+        store.add_audit_log("gray_zone_decide",
+                            {"entry_id": entry_id, "decision": decision, "principal": principal,
+                             "note": note[:200], "incident_id": incident_id}, decided["state"])
+        await ipc.broadcast("gray_zone_updated", {"entry": decided})
+        if incident_id:
+            await ipc.broadcast("incidents_updated", {"incidents": store.list_incidents(limit=100)})
+
     elif cmd == "incident_set_state":
         # Đóng/mở lại một sự việc từ UI (mục B5). Trước đây store có hàm này
         # nhưng không có đường nào gọi tới — sự việc mở ra rồi ở mãi đó.
@@ -3206,10 +3457,7 @@ def _ai_killed_now() -> bool:
     return ai_tools_killed()
 
 async def main_async(args: argparse.Namespace) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    configure_logging(args.verbose)
 
     # Interface Shield tự sniff — dò 1 LẦN DUY NHẤT ở đây, TRƯỚC khi tạo bất
     # kỳ thứ gì dùng tới interface, rồi truyền own_iface đi khắp nơi. Trước
@@ -3228,6 +3476,10 @@ async def main_async(args: argparse.Namespace) -> None:
     # File hỏng được dời sang một bên làm bằng chứng, không bao giờ bị xoá.
     # Agent la tien trinh DUY NHAT duoc doi schema. Xem Store.__init__.
     store = Store(recover_corrupt=True, allow_migration=True)
+    log_startup_banner(store, args)
+    retired = store.retire_stale_health()
+    if retired:
+        logger.info("Dọn %d dòng sức khoẻ không ai cập nhật quá 7 ngày: %s", len(retired), retired)
     ledger_ok, bad_record, ledger_message = store.verify_forensic_ledger()
     if not ledger_ok:
         logger.critical("FORENSIC LEDGER INVALID at record %s: %s", bad_record, ledger_message)
@@ -3519,6 +3771,7 @@ async def main_async(args: argparse.Namespace) -> None:
         # Tarpit phòng thủ — cũng không mở cổng nào cho tới khi tự bật.
         asyncio.create_task(tarpit_loop(store, ipc, alert_bus, tarpit_manager)),
         asyncio.create_task(maintenance_loop(store, alert_bus)),
+        asyncio.create_task(heartbeat_loop(store, event_bus, alert_bus)),
         asyncio.create_task(tamper_monitor_loop(alert_bus, store)),
         asyncio.create_task(problem_watch_loop(store, alert_bus, ipc, syslog_collector, live)),
         asyncio.create_task(live_stats_loop(live, ipc)),

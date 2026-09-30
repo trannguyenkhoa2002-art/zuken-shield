@@ -47,6 +47,34 @@ quiet network is quiet. Confirm collectors are reporting in the health view,
 then generate a known-good event from `TESTING_GUIDE.md` — the file-change test
 is the quickest.
 
+## Reading the agent log
+
+Operational lines are `event_name key=value key=value`, so they can be filtered
+with `grep`/`awk`. Timestamps have millisecond precision.
+
+```bash
+journalctl -u shield-agent -o cat | grep -E "^[0-9-]+ [0-9:.]+ (WARNING|ERROR)"
+journalctl -u shield-agent -o cat | grep -E " (agent_starting|heartbeat|maintenance_pass|alert) "
+```
+
+| Line | What it tells you |
+|---|---|
+| `agent_starting` | version, Python, database path/size/WAL/schema, memory limit, capability set, enabled collectors |
+| `heartbeat` (every 10 min) | uptime, events/s, queue depths, dropped events, RSS and cgroup memory, DB used, WAL size, and the longest wait/hold of the shared database lock since the last heartbeat |
+| `maintenance_pass` | duration, what was deleted, DB used vs. cap (`over_cap`), WAL size, per-step timings (`steps=`), and when the next pass runs; logged as WARNING above 15 s |
+| `alert` | alert id, `rule`, `severity`, `risk` (Behavior Risk), `confidence` (Evidence Confidence, -1 = not assessed), `subject`, policy `action`, and `gray=` when it also entered the gray zone |
+| `slow_sql` | a statement slower than `SHIELD_SLOW_SQL_S` (default 1 s) with its SQL |
+| `lock_held_long` | a thread held the shared database lock longer than `SHIELD_SLOW_LOCK_HOLD_S` (default 1 s), and what it was doing |
+| `watchdog_ping_slow` / `_recovered` | the watchdog check waited more than 2 s; names the lock holder, how long it held the lock and its SQL, then the total wait |
+| `event_loop_lag` | the event loop was blocked longer than expected |
+| `maintenance_failed` | which steps completed, the error type, and the lock holder |
+
+If systemd reports `Watchdog timeout`, look at the `watchdog_ping_slow`,
+`lock_held_long` and `slow_sql` lines just before it: they name the statement
+that starved the watchdog. Repeated identical warnings (for example desktop
+notifications with no session) are collapsed to one line per 10 minutes with
+the number of suppressed repeats.
+
 ## The agent was restarted by the watchdog
 
 ```bash

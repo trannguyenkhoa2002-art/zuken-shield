@@ -18,7 +18,7 @@ completed long-duration soak testing. Treat it as software you evaluate in a lab
 you own, not as a product you place in front of something valuable.
 
 Product release: **Beta 1.0**
-Internal package version: **3.0.0a3** (this is what `dpkg` and `pip` report).
+Internal package version: **3.0.0a11** (this is what `dpkg` and `pip` report).
 Beta 1.0 was published under the previous alpha number; this version adds the
 post-release fixes listed under *Unreleased* in `CHANGELOG.md`.
 
@@ -51,7 +51,14 @@ against detection rules, and preserves the evidence behind every conclusion.
 - **Guided incident Q&A** — five closed questions about an incident, answered
   deterministically from the report, without loading any model.
 - **Expert Evidence** — a read-only, bounded, audited query surface over the
-  event store for examining what actually happened.
+  event store for examining what actually happened, with the original log line
+  (secrets redacted) next to the normalized event where the source has one.
+- **Risk vs. confidence** — every alert has a Behavior Risk and a separate
+  Evidence Confidence score; modelled rules list the evidence still missing.
+- **Gray zone** — near-misses, low-confidence and suppressed signals are shown
+  to the analyst instead of hidden; only a person promotes or dismisses them.
+- **Live workspace** — up to ten filtered log tabs with Live / Pause / Search /
+  Replay, groups discovered from telemetry, and entity lifetime history.
 - **Response workflow** — six action types behind a policy engine, with
   preconditions, verification against observable system state, and rollback.
 - **Self-monitoring** — a guardian service, a systemd watchdog, a forensic
@@ -188,9 +195,11 @@ walkthroughs from telemetry to incident report.
 
 - The **agent** runs as root for kernel telemetry and other privileged host
   observations. Its systemd unit sets `MemoryMax=1G`, `TasksMax=512`,
-  `NoNewPrivileges`, `ProtectSystem=full`, `RestrictSUIDSGID` and an
-  address-family allowlist. It does **not** drop root capabilities — no
-  `CapabilityBoundingSet` is applied to the agent today. It imports no
+  `NoNewPrivileges`, `ProtectSystem=full`, `RestrictSUIDSGID`, an
+  address-family allowlist, and a measured `CapabilityBoundingSet` of 14
+  capabilities — no `CAP_SYS_ADMIN`, `CAP_SETUID`, `CAP_SYS_MODULE` or
+  `CAP_SYS_RAWIO`. `scripts/verify-agent-capabilities.py` checks every
+  privileged operation the agent performs inside that set. It imports no
   packet-capture library.
 - **Packet capture is optional and lives outside the agent.** It runs in the
   separate `shield-packet-collector` service, with a restricted capability set
@@ -230,7 +239,9 @@ More: `docs/SECURITY_MODEL.md` and `docs/PRIVACY.md`.
 - Detection quality is measured on the developer's own environment. Your traffic
   will differ.
 - The interface is Vietnamese and English only.
-- Response actions beyond `block_ip` have had limited real-world exercise.
+- Response actions (`block_ip`, `rate_limit_ip`, `isolate_endpoint`) are
+  exercised end-to-end — apply, verify against nftables, roll back — in a
+  disposable network namespace, but have had limited use on production hosts.
 - Some scenarios are deterministic-report-only by design.
 - **Watchdog stability is not yet proven.** The Beta 1.0 startup fix did not
   hold: the developer's journal records 41 watchdog timeouts between the release

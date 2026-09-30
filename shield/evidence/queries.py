@@ -54,6 +54,15 @@ JSON_FILTERS = {
 }
 MAX_DEPTH = 3
 
+# Trường event mang từng loại thực thể, cho phần quét gần đây của entity_history.
+# Cùng danh sách với shield/security/workspace.ENTITY_KEYS (import vòng nên chép
+# tên loại ở đây; test giữ hai bên khớp nhau).
+ENTITY_KEYS_FOR_HISTORY = {
+    "ip": ("src_ip", "dst_ip", "remote_ip", "source_ip", "ip", "gateway_ip", "local_ip"),
+    "mac": ("mac", "src_mac", "observed_mac", "baseline_mac"),
+    "user": ("user", "username", "auid_name"),
+}
+
 # Node "trung tâm": đo trên dữ liệu thật, thực thể `host` của máy cục bộ có bậc
 # 23.588 trên 23.598 cạnh — gần như MỌI cạnh đều chạm vào nó, vì mọi tiến trình
 # đều `ran_on` cùng một máy.
@@ -309,6 +318,101 @@ class EvidenceQueries:
         return self._run("get_entity_timeline",
                          {"entity_id": entity_id, "window_s": window_s, "limit": capped}, run)
 
+    def entity_history(self, entity_type: str, value: str, limit: int = DEFAULT_PAGE) -> dict:
+        """VÒNG ĐỜI của một thực thể: mọi event bằng chứng của nó, cũ nhất trước.
+
+        Đi qua evidence graph (index trên canonical_key và cạnh), nên không bị
+        trần 7 ngày của `search_events`: lịch sử dài đúng bằng thời gian lưu
+        trữ còn giữ event đó. Tóm tắt (lần đầu, lần cuối, số lần quan sát) lấy
+        từ chính thực thể trong graph — không đếm lại, không suy diễn.
+        """
+        from shield.security.workspace import GRAPH_TYPES
+
+        graph_type = GRAPH_TYPES.get(str(entity_type))
+        if graph_type is None:
+            raise ValueError(f"no graph entity type for {entity_type!r}")
+        key = str(value).lower() if graph_type == "device" else str(value)
+        capped = self._bounded(limit)
+
+        def run(deadline):
+            if graph_type == "user":
+                # Khoá user là "<máy>:<tên>" (resolver): khớp mọi máy có user đó.
+                escaped = key.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                entities = self.conn.execute(
+                    "SELECT entity_id, first_seen, last_seen, observation_count FROM graph_entities "
+                    "WHERE entity_type='user' AND (canonical_key=? OR canonical_key LIKE ? ESCAPE '\\') "
+                    "LIMIT 5", (key, f"%:{escaped}")).fetchall()
+            else:
+                entities = self.conn.execute(
+                    "SELECT entity_id, first_seen, last_seen, observation_count FROM graph_entities "
+                    "WHERE entity_type=? AND canonical_key=? LIMIT 5", (graph_type, key)).fetchall()
+            summary = {"entity_type": entity_type, "value": key, "known": bool(entities),
+                       "first_seen": min((e[1] for e in entities), default=0.0),
+                       "last_seen": max((e[2] for e in entities), default=0.0),
+                       "observations": sum(int(e[3]) for e in entities)}
+            refs: list[str] = []
+            for entity_id, *_ in entities:
+                self._check_deadline(deadline)
+                for edge in self.graph.neighbors(entity_id, None, MAX_LIMIT, "both"):
+                    for ref in edge.get("evidence_refs") or ():
+                        if isinstance(ref, str) and ref.startswith("event:") and ref[6:] not in refs:
+                            refs.append(ref[6:])
+                    if len(refs) >= capped * 4:
+                        break
+            events: list[dict] = []
+            seen_ids: set[str] = set()
+            for start in range(0, len(refs), 400):
+                self._check_deadline(deadline)
+                chunk = refs[start:start + 400]
+                placeholders = ",".join("?" * len(chunk))
+                rows = self.conn.execute(
+                    "SELECT id, event_id, ts, source, kind, data, origin, trust, ts_ingested, "
+                    "content_hash, signature_status, collector_version, raw FROM events "
+                    f"WHERE event_id != '' AND event_id IN ({placeholders})", chunk).fetchall()
+                for row in rows:
+                    event = self._event_row(row)
+                    seen_ids.add(event["event_id"])
+                    events.append(event)
+            from_graph = len(events)
+            # Graph giữ tối đa MAX_EVIDENCE_REFS_PER_EDGE tham chiếu mỗi cạnh
+            # (neo đầu + mới nhất). Cạnh ghi bằng bản cũ chỉ giữ tham chiếu ĐẦU
+            # TIÊN; khi các event đó hết hạn, graph không còn trỏ tới event nào
+            # gần đây. Đo trên DB thật: một MAC 6.524 lần quan sát
+            # trả về 0 event chỉ qua graph. Nên quét thêm cửa sổ gần nhất theo
+            # đúng các trường mang thực thể này — có index `ts`, LIMIT, deadline.
+            self._check_deadline(deadline)
+            keys = ENTITY_KEYS_FOR_HISTORY.get(str(entity_type), ())
+            if keys:
+                wanted = key if graph_type != "device" else key.lower()
+                clause = " OR ".join(f"json_extract(data, '$.{k}') = ?" for k in keys)
+                recent = self.conn.execute(
+                    "SELECT id, event_id, ts, source, kind, data, origin, trust, ts_ingested, "
+                    "content_hash, signature_status, collector_version, raw FROM events "
+                    f"WHERE ts >= ? AND ({clause}) ORDER BY ts DESC LIMIT ?",
+                    (time.time() - MAX_WINDOW_S, *([wanted] * len(keys)), capped)).fetchall()
+                recent_hit_limit = len(recent) >= capped
+                for row in recent:
+                    event = self._event_row(row)
+                    if event["event_id"] and event["event_id"] in seen_ids:
+                        continue
+                    seen_ids.add(event["event_id"])
+                    events.append(event)
+            else:
+                recent_hit_limit = False
+            events.sort(key=lambda e: (e["ts"], e["row_id"]))
+            summary["events_retained"] = len(events)
+            summary["from_graph"] = from_graph
+            summary["from_recent_scan"] = len(events) - from_graph
+            summary["recent_scan_days"] = MAX_WINDOW_S / 86400
+            # Quét chạm LIMIT = có thể còn nữa: nói "bị cắt", không giả vờ đủ.
+            summary["truncated"] = len(events) > capped or recent_hit_limit
+            # Cắt giữ phần MỚI NHẤT khi quá trần: người điều tra cần hiện tại
+            # hơn là 1000 dòng đầu tiên của một thực thể đã sống cả tháng.
+            return {"summary": summary, "events": events[-capped:]}
+
+        return self._run("entity_history", {"entity_type": entity_type, "value": key,
+                                            "limit": capped}, run)
+
     # --- tìm event: đường kiểm chứng độc lập cho chuyên gia ---
 
     @staticmethod
@@ -402,7 +506,7 @@ class EvidenceQueries:
             self._check_deadline(deadline)
             rows = self.conn.execute(
                 "SELECT id, event_id, ts, source, kind, data, origin, trust, "
-                "ts_ingested, content_hash, signature_status, collector_version "
+                "ts_ingested, content_hash, signature_status, collector_version, raw "
                 f"FROM events WHERE {' AND '.join(clauses)} "
                 "ORDER BY ts DESC, id DESC LIMIT ?",
                 values + [capped],
@@ -449,10 +553,12 @@ class EvidenceQueries:
             "kind": row[4], "data": data, "origin": row[6], "trust": row[7],
             "ts_ingested": row[8], "content_hash": row[9],
             "signature_status": row[10], "collector_version": row[11],
-            # Shield KHÔNG lưu payload gốc — bảng `events` chỉ có bản đã chuẩn
-            # hoá. Nói ra bằng dữ liệu, để giao diện không phải đoán, và để
-            # không ai dựng lại một "raw" giả từ các trường đã chuẩn hoá.
-            "raw_retained": False,
+            # Dòng gốc chỉ có khi nguồn THẬT SỰ có một dòng log (journal,
+            # syslog, auditd, probe). Không có thì nói ra bằng dữ liệu, để giao
+            # diện không phải đoán, và để không ai dựng lại một "raw" giả từ
+            # các trường đã chuẩn hoá.
+            "raw": str(row[12] or "") if len(row) > 12 else "",
+            "raw_retained": bool(len(row) > 12 and row[12]),
         }
 
     def get_event(self, event_id: str) -> dict | None:
@@ -468,7 +574,7 @@ class EvidenceQueries:
         def run(deadline):
             row = self.conn.execute(
                 "SELECT id, event_id, ts, source, kind, data, origin, trust, "
-                "ts_ingested, content_hash, signature_status, collector_version "
+                "ts_ingested, content_hash, signature_status, collector_version, raw "
                 "FROM events WHERE event_id != '' AND event_id = ?", (wanted,)).fetchone()
             if row is None:
                 return None

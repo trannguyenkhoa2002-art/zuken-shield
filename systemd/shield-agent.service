@@ -63,6 +63,15 @@ WatchdogSec=90
 # ProtectHome=yes vì quarantine cần khôi phục file về vị trí ban đầu.
 UMask=0077
 NoNewPrivileges=yes
+# Agent chạy uid 0 nhưng CHỈ giữ những capability nó thực sự dùng. Tập này được
+# đo, không đoán: scripts/verify-agent-capabilities.py và
+# scripts/verify-kernel-telemetry.py chạy PASS bên trong đúng bounding set này
+# (probe eBPF thật của Shield: 504 event, chuỗi exec->write->connect kích hoạt)
+# trên kernel 7.0, còn lượt đối chứng bỏ BPF/PERFMON/NET_ADMIN thì FAIL đúng 3
+# thao tác. KHÔNG có CAP_SYS_ADMIN, CAP_SETUID/SETGID, CAP_SYS_MODULE,
+# CAP_SYS_RAWIO, CAP_MKNOD, CAP_SYS_TIME. Thêm một capability ở đây là một thay
+# đổi bảo mật: đo lại bằng hai script trên, đừng thêm cho "chắc ăn".
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_IPC_LOCK CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER CAP_KILL CAP_AUDIT_READ
 PrivateTmp=yes
 ProtectSystem=full
 ProtectKernelTunables=yes

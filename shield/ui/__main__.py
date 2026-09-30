@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QInputDialog,
     QDialog,
     QFileDialog,
     QFrame,
@@ -36,6 +37,10 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPlainTextEdit,
+    QSplitter,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -57,6 +62,7 @@ from shield.agent.store import Store
 from shield.assessment.exporters import coverage as assessment_coverage
 from shield.security.investigations import build_process_graph
 from shield.security.diagnostics import export_diagnostic_bundle
+from shield.security.evidence_model import confidence_cell, describe as describe_evidence
 from shield import __creator__, __display_version__, __version__
 from shield.ui import theme
 from shield.ui.client import SocketClient
@@ -66,6 +72,9 @@ from shield.ui.evidence_view import (
     evidence_detail_rows,
 )
 from shield.ui.incident_view import correlation_reason_rows
+from shield.ui import gray_zone_view, workspace_view
+from shield.security.workspace import MAX_TABS, Workspace, WorkspaceFilter
+from shield.security.gray_zone import GrayZoneStore
 from shield.ai import chat_router
 from shield.ui import chat_view, report_view
 
@@ -941,14 +950,15 @@ class AlertsTab(QWidget, I18nMixin):
         actions_row.addStretch()
         layout.addLayout(actions_row)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.bind(
             lambda: self.table.setHorizontalHeaderLabels(
                 [t("alerts.col_time"), t("alerts.col_severity"), t("alerts.col_title"),
-                 t("alerts.col_risk"), t("alerts.col_detail"), t("alerts.col_subject")]
+                 t("alerts.col_risk"), t("alerts.col_confidence"), t("alerts.col_detail"),
+                 t("alerts.col_subject")]
             )
         )
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setItemDelegate(SeverityStripeDelegate(color_col=0, parent=self.table))
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
@@ -965,8 +975,13 @@ class AlertsTab(QWidget, I18nMixin):
     def _on_row_double_clicked(self, row: int, _col: int) -> None:
         item = self.table.item(row, 0)
         alert = item.data(Qt.ItemDataRole.UserRole) if item else None
-        if not alert or not alert.get("playbook"):
-            QMessageBox.information(self, t("playbook.title"), t("alerts.no_playbook"))
+        if not alert:
+            return
+        if not alert.get("playbook"):
+            # Không có hành động gợi ý vẫn phải xem được Risk / Confidence và
+            # bằng chứng còn thiếu — đó là thứ người phân tích cần nhất.
+            QMessageBox.information(self, t("playbook.title"),
+                                    f"{describe_evidence(alert, current_lang())}\n\n{t('alerts.no_playbook')}")
             return
         self._show_playbook_dialog(alert)
 
@@ -976,7 +991,8 @@ class AlertsTab(QWidget, I18nMixin):
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
         layout = QVBoxLayout(dialog)
-        subject_label = QLabel(f"{t('alerts.col_subject')}: {subject}\n\n{detail}")
+        subject_label = QLabel(f"{t('alerts.col_subject')}: {subject}\n\n{detail}\n\n"
+                               f"{describe_evidence(alert, current_lang())}")
         subject_label.setWordWrap(True)
         subject_label.setMinimumWidth(420)
         layout.addWidget(subject_label)
@@ -1067,6 +1083,7 @@ class AlertsTab(QWidget, I18nMixin):
             t(f"severity.{severity}") if severity in ("info", "warning", "critical") else severity,
             title,
             f"{int(alert.get('risk_score', 0))}/100",
+            confidence_cell(alert),
             detail,
             alert["subject"],
         ]
@@ -1095,7 +1112,7 @@ class AlertsTab(QWidget, I18nMixin):
             if alert is None:
                 continue
             title, detail = alert_text(alert)
-            title_item, detail_item = self.table.item(row, 2), self.table.item(row, 4)
+            title_item, detail_item = self.table.item(row, 2), self.table.item(row, 5)
             if title_item is not None:
                 title_item.setText(title)
             if detail_item is not None:
@@ -1483,9 +1500,12 @@ class TrafficTab(QWidget, I18nMixin):
             self.plot_widget.showGrid(x=True, y=True, alpha=0.15)
             self._curve = self.plot_widget.plot(pen=pg.mkPen(color=theme.ACCENT, width=2))
             layout.addWidget(self.plot_widget)
-        except ImportError:
+        except ImportError as exc:
+            # Nói LÝ DO thật: trên máy thật pyqtgraph ĐÃ cài, thứ thiếu là
+            # PySide6.QtOpenGL — câu "chưa cài pyqtgraph" đã chỉ sai chỗ sửa.
             no_pg_label = QLabel()
-            self.bind(lambda lbl=no_pg_label: lbl.setText(t("traffic.no_pyqtgraph")))
+            reason = str(exc)
+            self.bind(lambda lbl=no_pg_label, r=reason: lbl.setText(t("traffic.no_pyqtgraph", reason=r)))
             layout.addWidget(no_pg_label)
 
         self._last_traffic: dict | None = None
@@ -1698,6 +1718,378 @@ class TrafficTab(QWidget, I18nMixin):
         self._refresh_label()
         if self._curve is not None:
             self._curve.setData(list(self._data))
+
+
+RENDER_INTERVAL_MS = 250
+RENDER_MAX_ROWS = 500
+
+
+class WorkspaceTabView(QWidget):
+    """Một tab của Live Workspace: Live / Pause / Search / Replay."""
+
+    def __init__(self, workspace_tab: "LiveWorkspaceTab", tab_id: str) -> None:
+        super().__init__()
+        self.owner = workspace_tab
+        self.tab_id = tab_id
+        self.state = workspace_tab.workspace.tabs[tab_id]
+        layout = QVBoxLayout(self)
+        controls = row_layout()
+        self.live_btn = QPushButton()
+        self.live_btn.setCheckable(True)
+        self.live_btn.setChecked(True)
+        self.live_btn.toggled.connect(self._on_live_toggled)
+        controls.addWidget(self.live_btn)
+        self.window_combo = QComboBox()
+        for seconds, label in workspace_view.REPLAY_WINDOWS:
+            self.window_combo.addItem(label, seconds)
+        controls.addWidget(self.window_combo)
+        self.replay_btn = QPushButton(t("workspace.replay"))
+        self.replay_btn.clicked.connect(self._replay)
+        controls.addWidget(self.replay_btn)
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText(t("workspace.search"))
+        self.search_box.textChanged.connect(lambda _t: self.refresh_rows(full=True))
+        controls.addWidget(self.search_box)
+        layout.addLayout(controls)
+        self.status_label = QLabel()
+        layout.addWidget(self.status_label)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.table = QTableWidget(0, len(workspace_view.COLUMNS))
+        self.table.setHorizontalHeaderLabels(workspace_view.headers(current_lang()))
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        self.table.itemSelectionChanged.connect(self._show_detail)
+        splitter.addWidget(self.table)
+        self.detail = QPlainTextEdit()
+        self.detail.setReadOnly(True)
+        splitter.addWidget(self.detail)
+        layout.addWidget(splitter)
+        self._shown: list[dict] = []
+        self._drawn_appended = 0
+        self._drawn_generation = -1
+        # Gộp nhịp vẽ: event live chỉ đánh dấu "bẩn"; bảng cập nhật tối đa
+        # 4 lần/giây. Trước đây MỖI event xoá trắng rồi dựng lại cả bảng — đo
+        # trên agent thật: 130 lần xoá trắng trong 15 giây, dòng đang chọn bị
+        # mất — người dùng thấy tab "bật/tắt liên tục".
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(RENDER_INTERVAL_MS)
+        self._render_timer.timeout.connect(self.refresh_rows)
+        self._update_live_label()
+        self.refresh_rows(full=True)
+
+    def _update_live_label(self) -> None:
+        key = {"live": "workspace.live", "replay": "workspace.replaying"}.get(self.state.mode, "workspace.paused")
+        self.live_btn.setText(t(key))
+
+    def _on_live_toggled(self, live: bool) -> None:
+        if live:
+            # Bấm Live = chủ động theo luồng: bỏ chọn dòng, nếu không cơ chế
+            # tự tạm dừng (giữ dòng đang chọn) sẽ dừng lại ngay lập tức.
+            self.table.clearSelection()
+            self.state.resume()
+        else:
+            self.state.pause()
+        self._update_live_label()
+        self.refresh_rows()
+
+    def _replay(self) -> None:
+        self.live_btn.setChecked(False)
+        self.owner.request_history(self.tab_id, int(self.window_combo.currentData() or 3600))
+
+    def on_history(self, events: list[dict], summary: dict) -> None:
+        self.state.load_replay(events)
+        # Nút phải nói đúng chế độ: đang xem lại thì KHÔNG phải Live (event mới
+        # đang được giữ lại). Máy thật 29/09/2026: mở một nhóm tự replay mà nút
+        # vẫn hiện "● Live".
+        self.live_btn.blockSignals(True)
+        self.live_btn.setChecked(False)
+        self.live_btn.blockSignals(False)
+        self._update_live_label()
+        if summary:
+            self.status_label.setToolTip(json.dumps(summary, default=str))
+        self.refresh_rows()
+
+    def schedule_refresh(self) -> None:
+        if not self._render_timer.isActive():
+            self._render_timer.start()
+
+    def _fill_row(self, row: int, event: dict) -> None:
+        for col, value in enumerate(workspace_view.row_values(event)):
+            self.table.setItem(row, col, QTableWidgetItem(value))
+
+    def refresh_rows(self, full: bool = False) -> None:
+        text = self.search_box.text().strip()
+        new_count = self.state.appended - self._drawn_appended
+        incremental = (not full and not text and self._drawn_generation == self.state.generation
+                       and 0 <= new_count <= RENDER_MAX_ROWS)
+        selected = self.table.selectionModel().selectedRows() if incremental and new_count else []
+        if selected and selected[0].row() + new_count >= RENDER_MAX_ROWS and self.state.mode == "live":
+            # Dòng người dùng đang đọc sắp bị đẩy khỏi bảng: TỰ TẠM DỪNG thay vì
+            # để nó biến mất. Event mới vẫn được giữ (TabState.pending cho các
+            # event sau lúc dừng), và bấm Live là thấy hết.
+            self.state.pause()
+            self.live_btn.blockSignals(True)
+            self.live_btn.setChecked(False)
+            self.live_btn.blockSignals(False)
+            self._update_live_label()
+            self.status_label.setText(t("workspace.auto_paused"))
+            return
+        if incremental and new_count:
+            # Chỉ CHÈN dòng mới lên đầu và cắt đuôi: không xoá trắng, giữ dòng
+            # đang chọn và vị trí cuộn.
+            fresh = list(self.state.rows)[-new_count:]
+            self.table.setUpdatesEnabled(False)
+            try:
+                for event in fresh:
+                    self.table.insertRow(0)
+                    self._fill_row(0, event)
+                    self._shown.append(event)
+                overflow = self.table.rowCount() - RENDER_MAX_ROWS
+                for _ in range(max(0, overflow)):
+                    self.table.removeRow(self.table.rowCount() - 1)
+                self._shown = self._shown[-RENDER_MAX_ROWS:]
+            finally:
+                self.table.setUpdatesEnabled(True)
+        elif not incremental:
+            rows = self.state.search(text) if text else list(self.state.rows)
+            self._shown = rows[-RENDER_MAX_ROWS:]
+            self.table.setUpdatesEnabled(False)
+            try:
+                self.table.setRowCount(len(self._shown))
+                for row, event in enumerate(reversed(self._shown)):
+                    self._fill_row(row, event)
+            finally:
+                self.table.setUpdatesEnabled(True)
+        self._drawn_appended = self.state.appended
+        self._drawn_generation = self.state.generation
+        self.status_label.setText(workspace_view.status_text(self.state, current_lang()))
+
+    def _show_detail(self) -> None:
+        items = self.table.selectedItems()
+        if not items:
+            return
+        index = len(self._shown) - 1 - items[0].row()
+        if 0 <= index < len(self._shown):
+            self.detail.setPlainText(workspace_view.detail_text(self._shown[index], current_lang()))
+
+
+class LiveWorkspaceTab(QWidget, I18nMixin):
+    """Tối đa 10 tab log song song, nhóm tự khám phá từ telemetry.
+
+    Màn hình THỦ CÔNG: không tạo alert/incident, không đụng engine correlation.
+    """
+
+    def __init__(self, client: SocketClient) -> None:
+        super().__init__()
+        self._init_i18n()
+        self.client = client
+        self.workspace = Workspace()
+        self.views: dict[str, WorkspaceTabView] = {}
+        self._groups: list[dict] = []
+        layout = QHBoxLayout(self)
+        left = QVBoxLayout()
+        self.groups_label = QLabel()
+        self.bind(lambda: self.groups_label.setText(t("workspace.groups")))
+        left.addWidget(self.groups_label)
+        self.group_list = QListWidget()
+        self.group_list.itemDoubleClicked.connect(self._open_group)
+        self.group_list.addItem(QListWidgetItem(t("workspace.loading_groups")))
+        left.addWidget(self.group_list)
+        self.refresh_btn = QPushButton()
+        self.bind(lambda: self.refresh_btn.setText(t("workspace.refresh_groups")))
+        self.refresh_btn.clicked.connect(self.refresh_groups)
+        left.addWidget(self.refresh_btn)
+        self.new_btn = QPushButton()
+        self.bind(lambda: self.new_btn.setText(t("workspace.new_tab")))
+        self.new_btn.clicked.connect(self._new_tab_dialog)
+        left.addWidget(self.new_btn)
+        layout.addLayout(left, 1)
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self._close_tab)
+        layout.addWidget(self.tabs, 4)
+
+    def refresh_groups(self) -> None:
+        self.client.send_command({"cmd": "workspace_groups"})
+
+    def on_groups(self, groups: list[dict]) -> None:
+        self._groups = list(groups)
+        self.group_list.clear()
+        for group in self._groups:
+            item = QListWidgetItem(workspace_view.group_label(group, current_lang()))
+            item.setData(Qt.ItemDataRole.UserRole, group.get("filter"))
+            self.group_list.addItem(item)
+
+    def open_filter(self, flt: WorkspaceFilter) -> str | None:
+        try:
+            tab_id = self.workspace.open(flt)
+        except ValueError:
+            QMessageBox.information(self, t("workspace.title"), t("workspace.too_many", max=MAX_TABS))
+            return None
+        view = WorkspaceTabView(self, tab_id)
+        self.views[tab_id] = view
+        self.tabs.addTab(view, flt.label()[:40])
+        self.tabs.setCurrentWidget(view)
+        return tab_id
+
+    def _open_group(self, item: QListWidgetItem) -> None:
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        if not payload:            # dòng "Đang tải…" không phải một nhóm
+            return
+        tab_id = self.open_filter(WorkspaceFilter.from_dict(payload))
+        if tab_id:
+            self.request_history(tab_id, 86400)
+
+    def _new_tab_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t("workspace.new_tab"))
+        form = QVBoxLayout(dialog)
+        kind, source, value, text = QLineEdit(), QLineEdit(), QLineEdit(), QLineEdit()
+        entity = QComboBox()
+        entity.addItem("—", "")
+        for name in workspace_view.entity_types():
+            entity.addItem(name, name)
+        for label_key, widget in (("workspace.kind", kind), ("workspace.source", source),
+                                  ("workspace.entity", entity), ("workspace.value", value),
+                                  ("workspace.text", text)):
+            form.addWidget(QLabel(t(label_key)))
+            form.addWidget(widget)
+        ok = QPushButton("OK")
+        ok.clicked.connect(dialog.accept)
+        form.addWidget(ok)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            flt = WorkspaceFilter(
+                kinds=frozenset({kind.text().strip()}) if kind.text().strip() else frozenset(),
+                sources=frozenset({source.text().strip()}) if source.text().strip() else frozenset(),
+                entity_type=str(entity.currentData() or ""),
+                entity_value=value.text().strip() if entity.currentData() else "",
+                text=text.text().strip())
+        except ValueError as exc:
+            QMessageBox.warning(self, t("workspace.title"), str(exc))
+            return
+        self.open_filter(flt)
+
+    def _close_tab(self, index: int) -> None:
+        view = self.tabs.widget(index)
+        if isinstance(view, WorkspaceTabView):
+            self.workspace.close(view.tab_id)
+            self.views.pop(view.tab_id, None)
+        self.tabs.removeTab(index)
+
+    def request_history(self, tab_id: str, window_s: int) -> None:
+        state = self.workspace.tabs.get(tab_id)
+        if state is not None:
+            self.client.send_command({"cmd": "workspace_history", "tab_id": tab_id,
+                                      "filter": state.filter.to_dict(), "window_s": window_s})
+
+    def on_history(self, data: dict) -> None:
+        view = self.views.get(str(data.get("tab_id", "")))
+        if view is not None:
+            view.on_history(list(data.get("events") or []), dict(data.get("summary") or {}))
+
+    def on_live_event(self, event: dict) -> None:
+        for tab_id in self.workspace.dispatch(event):
+            view = self.views.get(tab_id)
+            if view is not None and view.state.mode == "live":
+                view.schedule_refresh()
+
+
+class GrayZoneTab(QWidget, I18nMixin):
+    """Đáng nghi nhưng chưa đủ bằng chứng — xem security/gray_zone.py.
+
+    Tab này chỉ HIỆN và chuyển quyết định của người dùng tới agent. Nó không
+    tự nâng hay bỏ mục nào; agent ghi principal (uid/pid) và audit.
+    """
+
+    STATES = ("open", "promoted", "dismissed")
+
+    def __init__(self, store: Store, client: SocketClient) -> None:
+        super().__init__()
+        self._init_i18n()
+        self.store = store
+        self.client = client
+        self._entries: list[dict] = []
+        layout = QVBoxLayout(self)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.bind(lambda: self.hint.setText(t("gray.hint")))
+        layout.addWidget(self.hint)
+        controls = row_layout()
+        self.state_combo = QComboBox()
+        for state in self.STATES:
+            self.state_combo.addItem(t(f"gray.state.{state}"), state)
+        self.bind(self._retranslate_states)
+        self.state_combo.currentIndexChanged.connect(lambda _i: self.refresh())
+        controls.addWidget(self.state_combo)
+        self.promote_btn = QPushButton()
+        self.bind(lambda: self.promote_btn.setText(t("gray.promote")))
+        self.promote_btn.clicked.connect(lambda: self._decide("promote"))
+        controls.addWidget(self.promote_btn)
+        self.dismiss_btn = QPushButton()
+        self.bind(lambda: self.dismiss_btn.setText(t("gray.dismiss")))
+        self.dismiss_btn.clicked.connect(lambda: self._decide("dismiss"))
+        controls.addWidget(self.dismiss_btn)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.table = QTableWidget(0, len(gray_zone_view.COLUMNS))
+        self.bind(lambda: self.table.setHorizontalHeaderLabels(gray_zone_view.headers(current_lang())))
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
+        self.bind(self._render)
+        self.load_from_store()
+
+    def _retranslate_states(self) -> None:
+        for index, state in enumerate(self.STATES):
+            self.state_combo.setItemText(index, t(f"gray.state.{state}"))
+
+    def load_from_store(self) -> None:
+        try:
+            self.on_entries(GrayZoneStore(self.store.conn).entries(self._state()))
+        except Exception:  # noqa: BLE001 — DB cũ chưa có bảng: agent sẽ migrate
+            self.on_entries([])
+
+    def _state(self) -> str:
+        return str(self.state_combo.currentData() or "open")
+
+    def refresh(self) -> None:
+        if not self.client.send_command({"cmd": "gray_zone_list", "state": self._state()}):
+            self.load_from_store()
+
+    def on_entries(self, entries: list[dict]) -> None:
+        self._entries = list(entries)
+        self._render()
+
+    def on_updated(self, _entry: dict) -> None:
+        self.refresh()
+
+    def _render(self) -> None:
+        self.table.setRowCount(0)
+        for entry in self._entries:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            for col, value in enumerate(gray_zone_view.row_values(entry, current_lang())):
+                item = QTableWidgetItem(value)
+                if col == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, entry.get("entry_id"))
+                self.table.setItem(row, col, item)
+
+    def _decide(self, decision: str) -> None:
+        items = self.table.selectedItems()
+        first = self.table.item(items[0].row(), 0) if items else None
+        if first is None:
+            QMessageBox.information(self, t("gray.title"), t("gray.select_first"))
+            return
+        note, ok = QInputDialog.getText(self, t("gray.title"), t("gray.note_prompt"))
+        if not ok:
+            return
+        self.client.send_command({"cmd": "gray_zone_decide", "decision": decision,
+                                  "entry_id": first.data(Qt.ItemDataRole.UserRole), "note": note})
 
 
 class LogTab(QWidget, I18nMixin):
@@ -3079,6 +3471,7 @@ class OverviewTab(QWidget, I18nMixin):
         self._live_series: collections.deque = collections.deque(maxlen=60)
         self._live_curve = None
         try:
+            os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
             import pyqtgraph as pg
 
             self.live_plot = pg.PlotWidget()
@@ -3089,9 +3482,10 @@ class OverviewTab(QWidget, I18nMixin):
             self.bind(lambda: self.live_plot.setLabel("bottom", t("live.axis_seconds"), color=theme.TEXT_DIM))
             self._live_curve = self.live_plot.plot(pen=pg.mkPen(color=theme.ACCENT, width=2))
             layout.addWidget(self.live_plot)
-        except ImportError:
+        except ImportError as exc:
             fallback = QLabel()
-            self.bind(lambda lbl=fallback: lbl.setText(t("traffic.no_pyqtgraph")))
+            reason = str(exc)
+            self.bind(lambda lbl=fallback, r=reason: lbl.setText(t("traffic.no_pyqtgraph", reason=r)))
             layout.addWidget(fallback)
 
         live_tables = row_layout()
@@ -4876,6 +5270,7 @@ class MainWindow(QMainWindow):
         self.devices_tab = DevicesTab(self.store, self.client)
         self.alerts_tab = AlertsTab(self.client)
         self.alerts_tab.load_from_store(self.store)
+        self.gray_zone_tab = GrayZoneTab(self.store, self.client)
         self.traffic_tab = TrafficTab(self.store, self.client)
         self.audit_tab = SelfAuditTab(self.store, self.client)
         self.advanced_tab = AdvancedSecurityTab(self.client, self.store)
@@ -4883,6 +5278,7 @@ class MainWindow(QMainWindow):
         self.log_tab = LogTab()
         self.log_tab.load_from_store(self.store)
         self.evidence_tab = EvidenceTab(self.client)
+        self.workspace_tab = LiveWorkspaceTab(self.client)
         self.reports_tab = ReportsTab(self.store, self.client)
         self.dns_tab = DnsTab(self.client)
         self.wifi_tab = WifiPasswordsTab(self.client)
@@ -4894,10 +5290,12 @@ class MainWindow(QMainWindow):
             (self.overview_tab, "nav.overview"),
             (self.incidents_tab, "nav.incidents"),
             (self.alerts_tab, "nav.alerts"),
+            (self.gray_zone_tab, "nav.gray_zone"),
             (self.devices_tab, "nav.devices"),
             (self.traffic_tab, "nav.traffic"),
             (self.log_tab, "nav.log"),
             (self.evidence_tab, "nav.evidence"),
+            (self.workspace_tab, "nav.workspace"),
             (self.dns_tab, "nav.dns"),
             (self.wifi_tab, "nav.wifi"),
             (self.advanced_tab, "nav.security_center"),
@@ -4913,6 +5311,7 @@ class MainWindow(QMainWindow):
                 (self.overview_tab, "nav.overview"),
                 (self.incidents_tab, "nav.incidents"),
                 (self.alerts_tab, "nav.alerts"),
+                (self.gray_zone_tab, "nav.gray_zone"),
             ]),
             ("section.monitoring", "header.monitoring_desc", [
                 (self.devices_tab, "nav.devices"),
@@ -4923,6 +5322,7 @@ class MainWindow(QMainWindow):
             ]),
             ("section.investigation", "header.investigation_desc", [
                 (self.evidence_tab, "nav.evidence"),
+                (self.workspace_tab, "nav.workspace"),
                 (self.advanced_tab, "nav.security_center"),
                 (self.response_tab, "nav.response"),
                 (self.assessment_tab, "nav.assessment"),
@@ -4946,6 +5346,7 @@ class MainWindow(QMainWindow):
             self._section_tabs.append(section_tabs)
             self.tabs.addTab(section_tabs, "")
         self.tabs.currentChanged.connect(self._update_page_header)
+        self.tabs.currentChanged.connect(self._refresh_workspace_if_shown)
         self._evidence_location = _locate_widget(self.tabs, self.evidence_tab)
 
         central = QWidget()
@@ -4956,6 +5357,7 @@ class MainWindow(QMainWindow):
         header.setObjectName("appHeader")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(22, 14, 22, 14)
+        # Dòng ghi công giữ nguyên ở mọi ngôn ngữ (tests/test_ui_wiring.py).
         brand = ElidedLabel(f"ZUKEN SHIELD  ver {__display_version__}  •  Created by {__creator__}")
         brand.setObjectName("appBrand")
         header_layout.addWidget(brand)
@@ -5036,6 +5438,11 @@ class MainWindow(QMainWindow):
                 select(inner)
         self.evidence_tab.open_event(event_id)
 
+    def _refresh_workspace_if_shown(self, _index: int = 0) -> None:
+        """Mở tab Điều tra: làm mới nhóm (mới xuất hiện từ lần xem trước)."""
+        if self.workspace_tab.isVisibleTo(self) and not self.workspace_tab._groups:
+            self.workspace_tab.refresh_groups()
+
     def _update_page_header(self, _index: int = 0) -> None:
         section_index = max(0, self.tabs.currentIndex())
         if section_index >= len(self._sections):
@@ -5101,6 +5508,10 @@ class MainWindow(QMainWindow):
         # Mất agent nghĩa là mọi con số trên màn hình đã ngừng cập nhật. Để
         # chúng đứng nguyên trông y hệt đang chạy — đó mới là chỗ nguy hiểm.
         self.overview_tab.mark_stale(not connected)
+        if connected:
+            # Nhóm của Live workspace suy ra từ telemetry: xin ngay khi nối được,
+            # thay vì để danh sách trống cho tới khi người dùng tự bấm "Làm mới".
+            self.workspace_tab.refresh_groups()
         self.connection_badge.style().unpolish(self.connection_badge)
         self.connection_badge.style().polish(self.connection_badge)
         self.status.showMessage(t("status.connected") if connected else t("status.disconnected"))
@@ -5150,6 +5561,11 @@ class MainWindow(QMainWindow):
             self.log_tab.prepend_event(msg["data"])
         elif msg_type == "evidence_event":
             self.evidence_tab.on_event(msg["data"])
+            self.workspace_tab.on_live_event(msg["data"])
+        elif msg_type == "workspace_groups":
+            self.workspace_tab.on_groups((msg.get("data") or {}).get("groups", []))
+        elif msg_type == "workspace_history":
+            self.workspace_tab.on_history(msg.get("data") or {})
         elif msg_type == "expert_search_events_result":
             self.evidence_tab.on_search_result(msg["data"])
         elif msg_type == "expert_get_event_result":
@@ -5225,6 +5641,10 @@ class MainWindow(QMainWindow):
             self.status.showMessage(t("status.connected_health", active=active, total=len(components)))
         elif msg_type == "runtime_health":
             self.advanced_tab.on_status(msg["data"])
+        elif msg_type == "gray_zone_list":
+            self.gray_zone_tab.on_entries((msg.get("data") or {}).get("entries", []))
+        elif msg_type == "gray_zone_updated":
+            self.gray_zone_tab.on_updated((msg.get("data") or {}).get("entry", {}))
         elif msg_type == "incidents_updated":
             incidents = (msg.get("data") or {}).get("incidents", [])
             self.incidents_tab.on_incidents(incidents)

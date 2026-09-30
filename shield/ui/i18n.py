@@ -32,6 +32,45 @@ STRINGS: dict[str, tuple[str, str]] = {
     "severity.warning": ("Cảnh báo", "Warning"),
     "severity.critical": ("Nguy cấp", "Critical"),
     "alerts.col_risk": ("Điểm rủi ro", "Risk score"),
+    "alerts.col_confidence": ("Độ tin cậy bằng chứng", "Evidence confidence"),
+    "nav.gray_zone": ("Vùng xám", "Gray zone"),
+    "nav.workspace": ("Điều tra trực tiếp", "Live workspace"),
+    "workspace.title": ("Điều tra trực tiếp", "Live workspace"),
+    "workspace.groups": ("Nhóm tự phát hiện (nhấp đúp để mở)", "Discovered groups (double-click to open)"),
+    "workspace.loading_groups": ("Đang tải nhóm từ agent…", "Loading groups from the agent…"),
+    "workspace.refresh_groups": ("Làm mới nhóm", "Refresh groups"),
+    "workspace.new_tab": ("Tab mới…", "New tab…"),
+    "workspace.too_many": ("Tối đa {max} tab. Đóng bớt một tab trước.", "At most {max} tabs. Close one first."),
+    "workspace.live": ("● Trực tiếp", "● Live"),
+    "workspace.paused": ("❚❚ Tạm dừng", "❚❚ Paused"),
+    "workspace.auto_paused": (
+        "Đã tự tạm dừng để giữ dòng bạn đang chọn — event mới vẫn được giữ lại, bấm Trực tiếp để xem tiếp.",
+        "Auto-paused to keep the row you selected — new events are held; click Live to continue.",
+    ),
+    "workspace.replaying": ("↺ Đang xem lại — bấm để về trực tiếp", "↺ Replaying — click to go live"),
+    "workspace.replay": ("Xem lại", "Replay"),
+    "workspace.search": ("Tìm trong tab (dòng gốc + bản chuẩn hoá)", "Search this tab (raw + normalized)"),
+    "workspace.kind": ("Loại event (kind)", "Event kind"),
+    "workspace.source": ("Nguồn", "Source"),
+    "workspace.entity": ("Loại thực thể", "Entity type"),
+    "workspace.value": ("Giá trị thực thể", "Entity value"),
+    "workspace.text": ("Chuỗi tìm", "Text"),
+    "gray.title": ("Vùng xám", "Gray zone"),
+    "gray.hint": (
+        "Tín hiệu đáng nghi nhưng CHƯA đủ bằng chứng: chưa tới ngưỡng, thiếu bằng chứng, "
+        "hoặc đã bị tắt tiếng. Shield không tự quyết định các mục này — bạn nâng lên "
+        "sự việc hoặc bỏ qua kèm ghi chú.",
+        "Suspicious signals WITHOUT enough evidence yet: below threshold, low evidence "
+        "confidence, or suppressed by policy. Shield never decides these on its own — "
+        "promote one to an incident or dismiss it with a note.",
+    ),
+    "gray.state.open": ("Đang mở", "Open"),
+    "gray.state.promoted": ("Đã nâng lên sự việc", "Promoted"),
+    "gray.state.dismissed": ("Đã bỏ qua", "Dismissed"),
+    "gray.promote": ("Nâng lên sự việc", "Promote to incident"),
+    "gray.dismiss": ("Bỏ qua", "Dismiss"),
+    "gray.select_first": ("Chọn một mục trước.", "Select an entry first."),
+    "gray.note_prompt": ("Ghi chú cho quyết định này:", "Note for this decision:"),
     "status.ok": ("Bình thường", "Normal"),
     "status.watching": ("Đang theo dõi", "Watching"),
     "status.alert": ("Có cảnh báo", "Alert active"),
@@ -155,11 +194,11 @@ STRINGS: dict[str, tuple[str, str]] = {
     "assessment.passed": ("Đạt", "Passed"),
     "assessment.failed": ("Không đạt", "Failed"),
     "assessment.inconclusive": ("Chưa kết luận", "Inconclusive"),
-    "assessment.coverage": ("Rule coverage", "Rule coverage"),
-    "assessment.col_test": ("Test case", "Test case"),
+    "assessment.coverage": ("Độ phủ rule", "Rule coverage"),
+    "assessment.col_test": ("Bài kiểm thử", "Test case"),
     "assessment.col_status": ("Kết quả", "Result"),
     "assessment.col_latency": ("Độ trễ", "Latency"),
-    "assessment.col_assertions": ("Assertions", "Assertions"),
+    "assessment.col_assertions": ("Điều kiện kiểm", "Assertions"),
     "assessment.no_results": ("Chưa có phiên đánh giá nào.", "No assessment session yet."),
     "assessment.assertions_fmt": ("{passed}/{total} đạt", "{passed}/{total} passed"),
     "assessment.latency_fmt": ("{value:.1f} ms", "{value:.1f} ms"),
@@ -174,10 +213,10 @@ STRINGS: dict[str, tuple[str, str]] = {
         "Collector health, MITRE ATT&CK, timeline search, investigation cases, behavior baseline, fleet, and release lab in one place.",
     ),
     "advanced.telemetry": ("Telemetry kernel", "Kernel telemetry"),
-    "advanced.mitre": ("MITRE coverage", "MITRE coverage"),
+    "advanced.mitre": ("Độ phủ MITRE", "MITRE coverage"),
     "advanced.cases": ("Hồ sơ đang mở", "Open cases"),
     "advanced.endpoints": ("Endpoint đã enroll", "Enrolled endpoints"),
-    "advanced.health": ("Shield Health", "Shield Health"),
+    "advanced.health": ("Sức khoẻ Shield", "Shield Health"),
     "advanced.search_title": ("Tìm kiếm timeline và process tree", "Timeline and process-tree search"),
     "advanced.search_placeholder": ("PID, hash, IP, user, hostname hoặc đường dẫn...", "PID, hash, IP, user, hostname, or path..."),
     "advanced.search": ("Tìm", "Search"),
@@ -209,7 +248,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "advanced.unhealthy": ("Cần kiểm tra", "Needs attention"),
     "advanced.baseline_title": ("Baseline hành vi cục bộ", "Local behavior baseline"),
     "advanced.baseline_summary": ("{behaviors} hành vi / {observations} quan sát", "{behaviors} behaviors / {observations} observations"),
-    "advanced.reset_baseline": ("Reset baseline", "Reset baseline"),
+    "advanced.reset_baseline": ("Đặt lại baseline", "Reset baseline"),
     "advanced.reset_confirm": ("Xóa toàn bộ baseline hành vi đã học? Thao tác được ghi forensic log.", "Delete the learned behavior baseline? The action is written to the forensic log."),
     "advanced.case_title": ("Hồ sơ điều tra", "Investigation cases"),
     "advanced.case_name": ("Tên hồ sơ", "Case title"),
@@ -223,10 +262,10 @@ STRINGS: dict[str, tuple[str, str]] = {
     "advanced.state.open": ("Đang mở", "Open"),
     "advanced.state.investigating": ("Đang điều tra", "Investigating"),
     "advanced.state.resolved": ("Đã xử lý", "Resolved"),
-    "advanced.state.false_positive": ("False positive", "False positive"),
+    "advanced.state.false_positive": ("Báo động nhầm", "False positive"),
     "advanced.suppression_title": ("Suppression và ngoại lệ có thời hạn", "Time-bounded suppression and exceptions"),
     "advanced.suppression_rule": ("Rule pattern, ví dụ LOCAL_*", "Rule pattern, e.g. LOCAL_*"),
-    "advanced.suppression_subject": ("Subject pattern", "Subject pattern"),
+    "advanced.suppression_subject": ("Mẫu đối tượng", "Subject pattern"),
     "advanced.suppression_hours": ("Số giờ", "Hours"),
     "advanced.suppression_reason": ("Lý do", "Reason"),
     "advanced.suppression_add": ("Thêm suppression", "Add suppression"),
@@ -239,7 +278,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "advanced.fleet_title": ("Fleet endpoint (certificate + RBAC)", "Fleet endpoints (certificate + RBAC)"),
     "advanced.col_endpoint": ("Endpoint", "Endpoint"),
     "advanced.col_role": ("Vai trò", "Role"),
-    "advanced.col_fingerprint": ("Certificate fingerprint", "Certificate fingerprint"),
+    "advanced.col_fingerprint": ("Dấu vân tay chứng chỉ", "Certificate fingerprint"),
     "settings.appearance": ("Giao diện", "Appearance"),
     "settings.appearance_dark": ("Tối", "Dark"),
     "settings.appearance_light": ("Sáng", "Light"),
@@ -374,8 +413,8 @@ STRINGS: dict[str, tuple[str, str]] = {
     "devices.col_confidence": ("Độ tin cậy", "Confidence"),
     "devices.col_mac": ("MAC", "MAC"),
     "devices.col_ip": ("IP", "IP"),
-    "devices.col_vendor": ("Vendor", "Vendor"),
-    "devices.col_hostname": ("Hostname", "Hostname"),
+    "devices.col_vendor": ("Hãng sản xuất", "Vendor"),
+    "devices.col_hostname": ("Tên máy", "Hostname"),
     "devices.col_first_seen": ("Lần đầu thấy", "First seen"),
     "devices.col_last_seen": ("Lần cuối thấy", "Last seen"),
     "devices.col_risk": ("Rủi ro", "Risk"),
@@ -416,7 +455,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "devices.criticality.Low priority": ("Ưu tiên thấp", "Low priority"),
     "devices.evidence.mac_vendor": ("Nhà sản xuất MAC", "MAC vendor"),
     "devices.evidence.mac_vendor.reason": ("Nhà sản xuất thường gắn với loại thiết bị được dự đoán.", "The vendor is commonly associated with the predicted device type."),
-    "devices.evidence.hostname": ("Hostname", "Hostname"),
+    "devices.evidence.hostname": ("Tên máy", "Hostname"),
     "devices.evidence.hostname.reason": ("Tên máy có đặc điểm thường gặp của loại thiết bị này.", "The hostname resembles this device type."),
     "devices.evidence.network_role": ("Vai trò mạng", "Network role"),
     "devices.evidence.network_role.reason": ("Thiết bị là default gateway đã được xác nhận.", "The device is the confirmed default gateway."),
@@ -475,8 +514,8 @@ STRINGS: dict[str, tuple[str, str]] = {
     "traffic.axis_bps": ("Bytes/giây", "Bytes/second"),
     "traffic.axis_seconds": ("Giây gần nhất", "Recent seconds"),
     "traffic.no_pyqtgraph": (
-        "(chưa cài pyqtgraph — chỉ hiện số liệu dạng chữ)",
-        "(pyqtgraph not installed — showing text-only numbers)",
+        "(không dựng được đồ thị: {reason} — chỉ hiện số liệu dạng chữ)",
+        "(graph unavailable: {reason} — showing text-only numbers)",
     ),
     # --- Tự kiểm tra ---
     "audit.sub": (
@@ -1656,7 +1695,7 @@ STRINGS: dict[str, tuple[str, str]] = {
         "Không tự dò được IP gateway — nhập tay.",
         "Couldn't auto-detect the gateway IP — enter it manually.",
     ),
-    "devices.gateway_tag": ("Gateway (router)", "Gateway (router)"),
+    "devices.gateway_tag": ("Cổng mạng (router)", "Gateway (router)"),
     "router.user_placeholder": ("User SSH (mặc định root)", "SSH user (default root)"),
     "router.key_placeholder": ("Đường dẫn SSH key (tuỳ chọn)", "SSH key path (optional)"),
     "router.script_placeholder": ("Đường dẫn script (in JSON ra stdout)", "Script path (prints JSON to stdout)"),
@@ -1680,7 +1719,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     # --- chung, dùng khi format evidence thiếu giá trị ---
     "common.unknown": ("không rõ", "unknown"),
     "portscan.scan_type.connect": ("connect-scan (handshake hoàn tất)", "connect-scan (handshake completed)"),
-    "portscan.scan_type.syn": ("SYN-scan (half-open)", "SYN-scan (half-open)"),
+    "portscan.scan_type.syn": ("SYN-scan (nửa mở)", "SYN-scan (half-open)"),
     # --- alert title/detail theo rule_id (agent gửi tiếng Việt cố định trong
     # `evidence`; bảng này dịch lại ở UI theo `current_lang()` — xem
     # `alert_text()` bên dưới. Key thiếu -> UI tự rơi về title/detail thô do
@@ -2146,13 +2185,18 @@ STRINGS: dict[str, tuple[str, str]] = {
     ),
     # Câu quan trọng nhất của màn hình: nói ra khi thứ được hỏi không tồn tại.
     "evidence.raw_not_retained": (
-        "Shield không lưu payload gốc. Bảng event chỉ chứa bản đã chuẩn hoá ở "
-        "trên. Những gì bạn thấy KHÔNG phải bản dựng lại của dữ liệu gốc.",
-        "Original payload was not retained. The event table stores only the "
-        "normalized record above. What you see is NOT a reconstruction of the "
-        "original data.",
+        "Không có dòng log gốc cho event này: nguồn của nó không phát ra dòng log "
+        "(event tổng hợp từ /proc, eBPF...), hoặc event được ghi trước khi Shield "
+        "lưu raw. Những gì bạn thấy ở trên là bản đã chuẩn hoá, KHÔNG phải bản dựng "
+        "lại của dữ liệu gốc.",
+        "No original log line for this event: its source does not emit one "
+        "(synthesised from /proc, eBPF...), or it was stored before Shield kept raw "
+        "lines. What you see above is the normalized record, NOT a reconstruction "
+        "of the original data.",
     ),
-    "evidence.raw_available": ("Có payload gốc.", "Original payload retained."),
+    "evidence.raw_available": (
+        "Dòng log gốc (đã che bí mật)", "Original log line (secrets redacted)",
+    ),
     "evidence.viewer_status": (
         "{rows}/{cap} dòng trên màn hình · {evicted} dòng đã cuộn khỏi khung "
         "(giới hạn màn hình, KHÔNG phải mất telemetry)",
@@ -2189,6 +2233,9 @@ STRINGS: dict[str, tuple[str, str]] = {
     ),
     "incidents.reason.kind.threshold_count": (
         "Vượt ngưỡng số lần", "Threshold exceeded",
+    ),
+    "incidents.reason.kind.analyst_promoted": (
+        "Người phân tích nâng từ vùng xám", "Promoted from the gray zone by an analyst",
     ),
     "incidents.reason.seconds": ("{value} giây", "{value} s"),
     "incidents.reason.none": (

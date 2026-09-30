@@ -8,6 +8,7 @@ from pathlib import Path
 
 from shield.common.models import Event
 from shield.security.scoring import RiskScorer
+from shield.security.gray_zone import detections_only
 
 
 def load_jsonl(path: Path, limit: int = 100_000) -> list[Event]:
@@ -27,7 +28,7 @@ def replay(events: list[Event], detectors: list) -> dict:
     alerts = []
     for event in events:
         for detector in detectors:
-            for alert in detector.handle_event(event):
+            for alert in detections_only(detector.handle_event(event)):
                 assessment = scorer.assess(alert)
                 alerts.append(replace(alert, risk_score=assessment.score,
                                 evidence_strength=assessment.evidence_strength).to_dict())

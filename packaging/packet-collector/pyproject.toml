@@ -5,7 +5,7 @@
 # đó thành thứ công cụ đóng gói cũng nhìn thấy, không chỉ con người.
 [project]
 name = "shield-packet-collector"
-version = "1.0.0"
+version = "1.0.1"
 description = "Optional packet-capture helper for Zuken Shield"
 requires-python = ">=3.10"
 dependencies = [

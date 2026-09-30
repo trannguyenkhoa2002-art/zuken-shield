@@ -1,6 +1,6 @@
 # Zuken Shield — Hướng dẫn sử dụng và vận hành
 
-**Created by Zuken** · Phiên bản `3.0.0a3` · [English version](USER_GUIDE.md)
+**Created by Zuken** · Phiên bản `3.0.0a11` · [English version](USER_GUIDE.md)
 
 Đây là tài liệu đầy đủ: Shield làm gì, cài và chạy ra sao, xử lý một cảnh báo thế
 nào, vận hành production ra sao, và kiểm thử gì trước khi phát hành. Nếu chỉ muốn
@@ -72,7 +72,7 @@ Muốn có ngăn chặn tự động phải đủ **cả ba**: quản trị viê
 
 ```bash
 cd ~/Desktop/"zuken shield"
-sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a11_amd64.deb
 ```
 
 APT có thể cần Internet để lấy dependency hệ thống còn thiếu. Riêng mã Python của
@@ -82,13 +82,13 @@ Shield được cài offline vào `/opt/shield/.venv`, không đụng PyPI.
 
 ```bash
 ./packaging/build-deb.sh
-sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a11_amd64.deb
 ```
 
 Build lại mà không đổi version thì phải thêm `--reinstall`:
 
 ```bash
-sudo apt install --reinstall ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install --reinstall ./dist/shield-monitor_3.0.0a11_amd64.deb
 ```
 
 ### Kiểm tra sau khi cài
@@ -99,7 +99,7 @@ systemctl status shield-agent shield-privileged --no-pager
 journalctl -u shield-agent -n 50 --no-pager
 ```
 
-Kết quả đúng là `install ok installed 3.0.0a3`, cả 2 service `active`, và log
+Kết quả đúng là `install ok installed 3.0.0a11`, cả 2 service `active`, và log
 khởi động liệt kê collector, đường dẫn DB và socket IPC. Bản thân trình cài cũng
 tự chạy health check và thoát với mã lỗi kèm log nếu service không lên.
 
@@ -843,6 +843,45 @@ qua kiểm mới được lưu, và chúng bị bỏ khi bằng chứng mà chú
 
 ---
 
+## 12e. Điều tra: rủi ro và độ tin cậy, vùng xám, workspace trực tiếp
+
+### Rủi ro hành vi và độ tin cậy bằng chứng là hai con số
+
+Mỗi alert mang **Rủi ro hành vi** (hành vi nguy hiểm tới đâu nếu nó là thật) và
+**Độ tin cậy bằng chứng** (quan sát của Shield ủng hộ nó tới đâu), cùng thang
+0–100. Với các rule có mô hình bằng chứng — brute force SSH, port scan, đổi MAC
+gateway, xung đột ARP, đổi resolver DNS, DHCP lạ — chi tiết alert liệt kê những gì đã thấy và những gì
+**còn thiếu**, ví dụ "Đăng nhập thành công từ cùng nguồn". Rule chưa có mô hình
+hiện ước lượng chung có dấu `*`; Shield không bịa danh sách thiếu cho chúng.
+Không con số nào đánh dấu một tấn công là đã xác nhận.
+
+### Vùng xám
+
+**Vận hành → Vùng xám** liệt kê tín hiệu đáng nghi nhưng chưa thành sự việc:
+lượt gần chạm ngưỡng detector (3/5 lần SSH sai, 8/15 cổng), alert có mô hình với
+rủi ro ≥ 40 nhưng độ tin cậy < 70, và alert bị tắt tiếng bởi suppression. Chỉ
+bạn quyết định: *Nâng lên sự việc* (ghi là "người phân tích nâng từ vùng xám")
+hoặc *Bỏ qua* kèm ghi chú. Cả hai đều được audit kèm user và tiến trình của bạn.
+Ngưỡng: `SHIELD_GRAY_MIN_RISK`, `SHIELD_CONFIRM_MIN_CONFIDENCE`.
+
+### Dòng log gốc bên cạnh event chuẩn hoá
+
+Event từ journal, auditd, syslog và probe giữ dòng gốc (đã che bí mật, tối đa
+`SHIELD_RAW_LOG_MAX_CHARS`, mặc định 2048; `0` để tắt). Expert Evidence hiện nó
+cạnh các trường chuẩn hoá. Event tổng hợp từ `/proc` hay eBPF không có dòng gốc
+và màn hình nói rõ điều đó.
+
+### Workspace trực tiếp
+
+**Điều tra → Điều tra trực tiếp** chạy tới mười tab log song song. Mỗi tab có bộ
+lọc riêng (kind, nguồn, IP, MAC, user, process, PID, cổng, hoặc chuỗi trên dòng
+gốc lẫn dữ liệu chuẩn hoá) và **Trực tiếp / Tạm dừng / Tìm / Xem lại** riêng.
+Tạm dừng giữ event mới lại và cho biết bao nhiêu đã giữ hoặc đã bỏ. Nhóm bên
+trái được phát hiện từ telemetry của bạn — loại event, IP, MAC, user, process —
+và nhóm mới được đánh dấu. Xem lại một IP, MAC hay user cho thấy toàn bộ lịch sử
+còn lưu qua evidence graph, không chỉ bảy ngày gần nhất. Workspace không bao giờ
+tạo alert hay sự việc.
+
 ## 13. Kiểm thử và các gate phát hành
 
 Unit test không cần quyền đặc biệt, chạy an toàn trên máy làm việc:
@@ -909,14 +948,14 @@ Nếu phiên hiện tại chưa có group `shield`, đăng xuất rồi đăng n
 **Báo `No module named shield`** — virtualenv riêng cài chưa xong:
 
 ```bash
-sudo apt install --reinstall ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install --reinstall ./dist/shield-monitor_3.0.0a11_amd64.deb
 /opt/shield/.venv/bin/python -c 'import shield; print(shield.__version__)'
 ```
 
 **Cài dở dang hoặc thiếu dependency**
 
 ```bash
-sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a11_amd64.deb
 sudo dpkg --configure -a
 ```
 

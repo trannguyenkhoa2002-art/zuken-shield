@@ -1,0 +1,33 @@
+{
+  "note": "Mỗi giai đoạn chỉ PASS qua scripts/phase_gate.py: test nghiệm thu pass trên HEAD, FAIL trên `base`, ruff/mypy sạch, full suite xanh ở ulimit -n 1024.",
+  "phases": {
+    "1": {
+      "title": "Behavior Risk và Evidence Confidence tách đôi, có danh sách bằng chứng còn thiếu",
+      "base": "a4f9efe",
+      "acceptance_tests": [
+        "tests/test_phase1_dual_scoring.py"
+      ]
+    },
+    "2": {
+      "title": "Vùng xám: near-miss, thiếu bằng chứng, tắt tiếng — hiện cho người phân tích, chỉ người quyết định",
+      "base": "90dc17a",
+      "acceptance_tests": [
+        "tests/test_phase2_gray_zone.py"
+      ]
+    },
+    "3": {
+      "title": "Giữ cả dòng log gốc (đã che bí mật, có giới hạn) và event chuẩn hoá",
+      "base": "7f9daff",
+      "acceptance_tests": [
+        "tests/test_phase3_raw_log.py"
+      ]
+    },
+    "4": {
+      "title": "Live Workspace: 10 tab song song, Live/Pause/Search/Replay, nhóm tự khám phá, vòng đời thực thể",
+      "base": "7bdccb4",
+      "acceptance_tests": [
+        "tests/test_phase4_live_workspace.py"
+      ]
+    }
+  }
+}

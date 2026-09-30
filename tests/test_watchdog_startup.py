@@ -52,7 +52,12 @@ def test_the_first_ping_still_proves_the_store_answers():
     minh "tiến trình còn tồn tại", đúng thứ `Restart=` đã bắt được rồi.
     """
     body = _watchdog_source()
-    assert "get_baseline" in body, "ping không còn chứng minh store trả lời"
+    # Câu hỏi store nằm trong `check_store_alive` (có chẩn đoán khoá); vòng
+    # watchdog phải GỌI nó qua `alive()`, và hàm đó phải thật sự hỏi store.
+    source = AGENT.read_text(encoding="utf-8")
+    helper = source[source.index("async def check_store_alive("):source.index("async def watchdog_loop(")]
+    assert "store.get_baseline" in helper, "ping không còn chứng minh store trả lời"
+    assert "check_store_alive(store)" in body, "watchdog_loop không còn hỏi store"
     tree = ast.parse(body.replace("async def watchdog_loop", "async def _wd", 1))
     guarded = 0
     for node in ast.walk(tree):

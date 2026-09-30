@@ -21,6 +21,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Awaitable, Callable
 
+from shield.common.diaglog import RateLimiter, event
 from shield.common.models import Alert
 from shield.common.secrets import redact_text
 
@@ -28,6 +29,9 @@ logger = logging.getLogger("shield.notifier")
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 NOTIFY_TIMEOUT_S = 5.0
+# Cùng một sự cố thông báo lặp theo TỪNG alert (vài chục lần/phút lúc khởi động):
+# ghi một dòng mỗi 10 phút kèm số lần đã nén.
+_NOTIFY_LOG = RateLimiter(interval_s=600.0)
 
 
 # Kênh thông báo desktop khi agent chạy bằng root (systemd).
@@ -119,13 +123,15 @@ async def notify_desktop(alert: Alert) -> None:
         return
     delivered = await _desktop_relay(payload)
     if not delivered:
-        # Nói thẳng lý do và cách sửa: im lặng ở đây chính là lỗi cũ.
-        logger.warning(
-            "Không có phiên desktop nào đang chạy shield-notify — thông báo %s không tới "
-            "được người dùng. Bật bằng: systemctl --user enable --now shield-notify.service "
-            "(user phải thuộc nhóm shield).",
-            alert.rule_id,
-        )
+        # Nói thẳng lý do và cách sửa: im lặng ở đây chính là lỗi cũ — nhưng chỉ
+        # một dòng mỗi 10 phút; số thông báo bị nén nằm trong `not_delivered`.
+        allowed, suppressed = _NOTIFY_LOG.allow("no_desktop_session")
+        if allowed:
+            logger.warning(event(
+                "desktop_notification_not_delivered", rule=alert.rule_id,
+                reason="no shield-notify session subscribed",
+                also_not_delivered=suppressed or None,
+                fix="systemctl --user enable --now shield-notify.service (user must be in group shield)"))
 
 
 def _send_telegram_sync(token: str, chat_id: str, text: str) -> int | Exception:

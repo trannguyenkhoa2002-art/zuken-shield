@@ -18,13 +18,13 @@ import logging
 import re
 import sqlite3
 import secrets
-import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from shield.common import sdnotify
+from shield.common.diaglog import LockSnapshot, RateLimiter, TrackedRLock, event
 from shield.common.models import Alert, Event
 from shield.ai.audit import AI_AUDIT_INDEXES, AI_AUDIT_SCHEMA
 from shield.ai.chat import CHAT_SCHEMA
@@ -32,9 +32,36 @@ from shield.ai.enrichment import ENRICHMENT_SCHEMA
 from shield.decision.calibration import CALIBRATION_INDEXES, CALIBRATION_SCHEMA
 from shield.evidence.graph import GRAPH_INDEXES, GRAPH_SCHEMA, EvidenceGraph
 from shield.response.jobs import RESPONSE_INDEXES, RESPONSE_SCHEMA
+from shield.security.gray_zone import GRAY_INDEXES, GRAY_SCHEMA, GrayZoneStore
+from shield.security.workspace import WORKSPACE_SCHEMA
 from shield.security.knowledge import KNOWLEDGE_INDEXES, KNOWLEDGE_SCHEMA
 
 logger = logging.getLogger("shield.store")
+
+# Ngưỡng ghi log chẩn đoán (giây). Đặt bằng môi trường để chỉnh mà không sửa mã.
+def _env_seconds(name: str, default: float) -> float:
+    try:
+        return max(0.05, float(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+SLOW_SQL_S = _env_seconds("SHIELD_SLOW_SQL_S", 1.0)
+SLOW_LOCK_HOLD_S = _env_seconds("SHIELD_SLOW_LOCK_HOLD_S", 1.0)
+_SLOW_LOG = RateLimiter(interval_s=30.0)
+
+
+def _sql_preview(sql: str, limit: int = 110) -> str:
+    return " ".join(sql.split())[:limit]
+
+
+def _log_slow_hold(snapshot: LockSnapshot) -> None:
+    """Một luồng giữ khoá kết nối chung quá lâu — ping watchdog phải chờ nó."""
+    allowed, suppressed = _SLOW_LOG.allow("lock_held_long")
+    if allowed:
+        logger.warning(event("lock_held_long", held_s=snapshot.held_for_s, thread=snapshot.thread,
+                             doing=snapshot.label, threshold_s=SLOW_LOCK_HOLD_S,
+                             suppressed=suppressed or None))
 
 # --- Trần công việc cho MỘT lượt bảo trì ---
 #
@@ -49,12 +76,20 @@ logger = logging.getLogger("shield.store")
 SIZE_CAP_MAX_BATCHES = 1
 RETENTION_DELETE_LIMIT = 50_000
 GRAPH_PRUNE_MAX_EDGES = 20_000
+# Tỷ lệ cạnh mồ côi trong một lát dọn để size cap dọn graph THAY cho cắt event.
+GRAPH_FIRST_ORPHAN_RATIO = 0.5
 # Con trỏ dọn graph, lưu trong `baseline` để một lần khởi động lại không làm
 # lượt quét quay về đầu bảng mãi mãi.
 GRAPH_PRUNE_CURSOR_KEY = "graph_prune_cursor"
+GRAPH_ENTITY_CURSOR_KEY = "graph_entity_prune_cursor"
+SIZE_CAP_DELETE_CHUNK = 1_000
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 CONFIG_SCHEMA_VERSION = 1
+
+
+class GraphIngestError(RuntimeError):
+    """Dựng evidence graph cho một event thất bại. Event ĐÃ được lưu."""
 
 
 class DatabaseIntegrityError(RuntimeError):
@@ -101,6 +136,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     confidence REAL NOT NULL DEFAULT 0.5,
     policy_action TEXT NOT NULL DEFAULT 'alert',
     count INTEGER NOT NULL DEFAULT 1,
+    evidence_confidence INTEGER NOT NULL DEFAULT -1,
+    evidence_assessment TEXT NOT NULL DEFAULT '{}',
     first_seen REAL NOT NULL DEFAULT 0,
     last_seen REAL NOT NULL DEFAULT 0,
     sources TEXT NOT NULL DEFAULT '[]'
@@ -409,7 +446,7 @@ CREATE TABLE IF NOT EXISTS system_health (
     detail TEXT NOT NULL,
     updated_ts REAL NOT NULL
 );
-""" + GRAPH_SCHEMA + CALIBRATION_SCHEMA + RESPONSE_SCHEMA + AI_AUDIT_SCHEMA + KNOWLEDGE_SCHEMA + ENRICHMENT_SCHEMA + CHAT_SCHEMA
+""" + GRAPH_SCHEMA + CALIBRATION_SCHEMA + RESPONSE_SCHEMA + AI_AUDIT_SCHEMA + KNOWLEDGE_SCHEMA + ENRICHMENT_SCHEMA + CHAT_SCHEMA + GRAY_SCHEMA + WORKSPACE_SCHEMA
 
 # Index tách khỏi SCHEMA có chủ ý: chúng tham chiếu cột mà một database cũ
 # chưa có (v3 không có events.origin). CREATE TABLE IF NOT EXISTS là no-op
@@ -448,7 +485,7 @@ CREATE INDEX IF NOT EXISTS idx_events_ingested ON events(ts_ingested);
 --     source=endpoint  (   58.717 dòng)     1,63 ms  ->  0,27 ms
 -- Chi phí: dựng 0,9 giây, +47 MB.
 CREATE INDEX IF NOT EXISTS idx_events_source_ts ON events(source, ts);
-""" + GRAPH_INDEXES + CALIBRATION_INDEXES + RESPONSE_INDEXES + AI_AUDIT_INDEXES + KNOWLEDGE_INDEXES
+""" + GRAPH_INDEXES + CALIBRATION_INDEXES + RESPONSE_INDEXES + AI_AUDIT_INDEXES + KNOWLEDGE_INDEXES + GRAY_INDEXES
 
 
 def _describe_path(path: Path) -> str:
@@ -523,7 +560,33 @@ class _ThreadSafeConnection:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        self._lock = threading.RLock()
+        self._lock = TrackedRLock(slow_hold_s=SLOW_LOCK_HOLD_S, on_slow_hold=_log_slow_hold)
+        self._restore_normal = False
+
+    def durable_commit(self) -> None:
+        """Sau commit KẾ TIẾP, fsync WAL để những gì vừa commit là bền.
+
+        Không đổi `synchronous` ngay: SQLite cấm đổi mức an toàn BÊN TRONG
+        transaction ("Safety level may not be changed inside a transaction"),
+        và chỗ gọi (ghi ledger) thường đã ở trong transaction.
+        """
+        with self._lock:
+            self._restore_normal = True
+
+    def _after_commit(self) -> None:
+        if not self._restore_normal:
+            return
+        self._restore_normal = False
+        # Ngoài transaction: một commit nhỏ với synchronous=FULL fsync file WAL,
+        # và fsync là cho CẢ file — các khung ledger vừa commit đi theo.
+        self._conn.execute("PRAGMA synchronous=FULL")
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO baseline (key, value, set_ts) "
+                "VALUES ('forensic_ledger_synced', ?, ?)", (str(time.time()), time.time()))
+            self._conn.commit()
+        finally:
+            self._conn.execute("PRAGMA synchronous=NORMAL")
 
     def __enter__(self) -> "_ThreadSafeConnection":
         # `with store.conn:` là transaction của sqlite3. Giữ khoá suốt cả khối
@@ -538,30 +601,56 @@ class _ThreadSafeConnection:
 
     def __exit__(self, exc_type, exc, tb):
         try:
-            return self._conn.__exit__(exc_type, exc, tb)
+            result = self._conn.__exit__(exc_type, exc, tb)
+            self._after_commit()
+            return result
         finally:
             self._lock.release()
 
+    def lock_snapshot(self) -> LockSnapshot:
+        return self._lock.snapshot()
+
+    def drain_lock_stats(self) -> dict:
+        return self._lock.drain_stats()
+
+    def _timed(self, sql: str, run):
+        started = time.monotonic()
+        self._lock.label(_sql_preview(sql))
+        result = run()
+        took = time.monotonic() - started
+        if took >= SLOW_SQL_S:
+            allowed, suppressed = _SLOW_LOG.allow("slow_sql:" + _sql_preview(sql, 60))
+            if allowed:
+                logger.warning(event("slow_sql", took_s=took, sql=_sql_preview(sql),
+                                     threshold_s=SLOW_SQL_S, suppressed=suppressed or None))
+        return result
+
     def execute(self, sql: str, params=()) -> _Result:
         with self._lock:
-            cursor = self._conn.execute(sql, params)
-            return _Result(cursor.fetchall(), cursor.rowcount)
+            def run() -> _Result:
+                cursor = self._conn.execute(sql, params)
+                return _Result(cursor.fetchall(), cursor.rowcount)
+            return self._timed(sql, run)
 
     def executemany(self, sql: str, params) -> _Result:
         with self._lock:
-            cursor = self._conn.executemany(sql, params)
-            return _Result(cursor.fetchall(), cursor.rowcount)
+            def run() -> _Result:
+                cursor = self._conn.executemany(sql, params)
+                return _Result(cursor.fetchall(), cursor.rowcount)
+            return self._timed(sql, run)
 
     def executescript(self, script: str) -> None:
         with self._lock:
-            self._conn.executescript(script)
+            self._timed(script, lambda: self._conn.executescript(script))
 
     def commit(self) -> None:
         with self._lock:
             self._conn.commit()
+            self._after_commit()
 
     def backup(self, target: sqlite3.Connection) -> None:
         with self._lock:
+            self._lock.label("sqlite backup")
             self._conn.backup(target)
 
     def close(self) -> None:
@@ -604,6 +693,13 @@ class Store:
         self.conn.execute("PRAGMA foreign_keys=ON;")
         self.conn.execute("PRAGMA busy_timeout=5000;")
         self.conn.execute("PRAGMA journal_mode=WAL;")
+        # NORMAL, không FULL: với WAL, database vẫn luôn nhất quán; thứ đổi là
+        # mất điện có thể làm mất vài giao dịch CUỐI. Đo trên máy thật
+        # (30/09/2026): FULL fsync ở mọi commit, 3,7 ms/commit, ~2,4 commit
+        # mỗi event -> 9 ms CPU/event, agent 36 % một lõi ở 38 event/giây.
+        # NORMAL: 0,014 ms/commit. Forensic ledger vẫn fsync từng lần ghi —
+        # xem `_append_forensic_record` và `_ThreadSafeConnection`.
+        self.conn.execute("PRAGMA synchronous=NORMAL;")
         if not existed:
             # CHỈ đặt được trên database còn rỗng: đổi auto_vacuum trên database
             # đã có dữ liệu đòi một lượt VACUUM viết lại toàn bộ file. Với bản
@@ -628,10 +724,16 @@ class Store:
             # sớm ở đó sẽ để lại một file rỗng không có bảng nào.
             return
         if existed and previous_version < SCHEMA_VERSION:
-            self.backup_database(
-                self.path.parent / "backups" /
-                f"shield-pre-migration-v{previous_version}-{int(time.time())}.db"
-            )
+            reusable = self._fresh_pre_upgrade_backup(previous_version)
+            if reusable is not None:
+                logger.info("Dùng lại bản sao lưu trước nâng cấp %s làm bản sao lưu trước "
+                            "migration v%d (database không đổi kể từ lúc chép)",
+                            reusable, previous_version)
+            else:
+                self.backup_database(
+                    self.path.parent / "backups" /
+                    f"shield-pre-migration-v{previous_version}-{int(time.time())}.db"
+                )
         self.conn.executescript(SCHEMA)
         self._migrate_schema()
         self.conn.executescript(SCHEMA_INDEXES)
@@ -642,6 +744,53 @@ class Store:
         if self.recovery:
             self.set_baseline("recovered_from_corruption_ts", str(self.recovery["ts"]))
             self.set_baseline("recovered_from_corruption_detail", json.dumps(self.recovery))
+
+    PRE_UPGRADE_REUSE_S = 3600.0
+
+    def _fresh_pre_upgrade_backup(self, previous_version: int) -> Path | None:
+        """Bản `shield-pre-upgrade-*.db` dùng thay được bản sao lưu trước migration.
+
+        Máy thật 29/09/2026: preinst chép DB 2,9 GB lúc 18:22:04, rồi 36 giây sau
+        agent chép lại CÙNG trạng thái đó trước migration v10 -> v11 — 6 GB và
+        ~90 giây khởi động cho một bản sao trùng. Chỉ dùng lại khi CHỨNG MINH
+        được là cùng trạng thái: bản sao mới (< 1 giờ), database và WAL không
+        bị sửa sau lúc chép, cùng user_version, và bản sao qua quick_check.
+        Thiếu điều nào thì sao lưu như cũ — đây là đường lui của migration.
+        """
+        directory = self.path.parent / "backups"
+        if not directory.is_dir():
+            return None
+        candidates = sorted(
+            (p for p in directory.glob("shield-pre-upgrade-*.db") if p.is_file() and not p.is_symlink()),
+            key=lambda p: p.stat().st_mtime, reverse=True)
+        if not candidates:
+            return None
+        backup = candidates[0]
+        taken = backup.stat().st_mtime
+        if time.time() - taken > self.PRE_UPGRADE_REUSE_S:
+            return None
+        for suffix in ("", "-wal"):
+            live = Path(str(self.path) + suffix)
+            if not live.exists():
+                continue
+            info = live.stat()
+            # WAL rỗng vừa được chính lần mở này tạo ra không phải là thay đổi.
+            if suffix == "-wal" and info.st_size == 0:
+                continue
+            if info.st_mtime > taken + 1.0:
+                return None
+        try:
+            probe = sqlite3.connect(f"file:{backup}?mode=ro", uri=True, timeout=5)
+            try:
+                if int(probe.execute("PRAGMA user_version").fetchone()[0]) != previous_version:
+                    return None
+                if [r[0] for r in probe.execute("PRAGMA quick_check(1)").fetchall()] != ["ok"]:
+                    return None
+            finally:
+                probe.close()
+        except sqlite3.DatabaseError:
+            return None
+        return backup
 
     @staticmethod
     def _row_total(conn: sqlite3.Connection) -> int:
@@ -846,6 +995,11 @@ class Store:
             ("first_seen", "REAL NOT NULL DEFAULT 0"),
             ("last_seen", "REAL NOT NULL DEFAULT 0"),
             ("sources", "TEXT NOT NULL DEFAULT '[]'"),
+            # v11: Evidence Confidence tách khỏi Behavior Risk. -1 trên dòng cũ
+            # = chưa đánh giá; KHÔNG suy ngược từ `confidence`, vì con số đó đo
+            # thứ khác (độ phong phú bằng chứng) và gán lại sẽ là bịa.
+            ("evidence_confidence", "INTEGER NOT NULL DEFAULT -1"),
+            ("evidence_assessment", "TEXT NOT NULL DEFAULT '{}'"),
         ):
             if name not in columns:
                 self.conn.execute(f"ALTER TABLE alerts ADD COLUMN {name} {ddl}")
@@ -863,6 +1017,8 @@ class Store:
             ("content_hash", "TEXT NOT NULL DEFAULT ''"),
             ("signature_status", "TEXT NOT NULL DEFAULT 'unsigned'"),
             ("collector_version", "TEXT NOT NULL DEFAULT ''"),
+            # v11: dòng log gốc (đã che bí mật). Rỗng trên dòng cũ = không lưu.
+            ("raw", "TEXT NOT NULL DEFAULT ''"),
         ):
             if name not in event_columns:
                 self.conn.execute(f"ALTER TABLE events ADD COLUMN {name} {ddl}")
@@ -1268,7 +1424,7 @@ class Store:
                 except OSError:
                     pass
 
-    def insert_event(self, ev: Event) -> None:
+    def _insert_event_row(self, ev: Event) -> None:
         import json
 
         # origin/trust do collector gắn vào Event.data — collector là nơi DUY
@@ -1283,14 +1439,49 @@ class Store:
         # chập là một lần timeline điều tra nhân đôi.
         self.conn.execute(
             "INSERT OR IGNORE INTO events (ts, source, kind, data, origin, trust, "
-            "event_id, ts_ingested, content_hash, signature_status, collector_version) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "event_id, ts_ingested, content_hash, signature_status, collector_version, raw) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (ev.ts, ev.source, ev.kind, json.dumps(ev.data), origin, trust,
              ev.event_id, ev.ts_ingested, ev.content_hash_, ev.signature_status,
-             ev.collector_version),
+             ev.collector_version, ev.raw),
         )
+
+    def insert_event(self, ev: Event) -> None:
+        self._insert_event_row(ev)
         self.conn.commit()
         self.touch_collector_event(ev.source, ev.ts)
+
+    def ingest_event(self, ev: Event) -> tuple[int, int]:
+        """Ghi event VÀ dựng graph của nó trong MỘT commit.
+
+        Đo trên bản sao DB thật với 6.000 event thật (30/09/2026): sau khi bỏ
+        fsync từng commit, commit vẫn chiếm ~5,4/8,5 giây vì mỗi event tốn
+        ~2,4 commit (event, graph, hành vi). Gộp event + graph làm một.
+
+        Graph chạy trong SAVEPOINT: dựng graph lỗi thì graph quay lui nhưng
+        event VẪN được lưu — đúng hành vi trước đây, khi event đã commit riêng
+        trước graph. Lỗi graph được ném lại SAU commit để chỗ gọi ghi nhận.
+        """
+        from shield.evidence.resolver import resolve
+
+        graph_error: Exception | None = None
+        written = (0, 0)
+        with self.conn:
+            self._insert_event_row(ev)
+            entities, edges = resolve(ev)
+            if entities or edges:
+                self.conn.execute("SAVEPOINT graph_ingest")
+                try:
+                    written = EvidenceGraph(self.conn).ingest(entities, edges)
+                    self.conn.execute("RELEASE graph_ingest")
+                except (sqlite3.DatabaseError, ValueError) as exc:
+                    self.conn.execute("ROLLBACK TO graph_ingest")
+                    self.conn.execute("RELEASE graph_ingest")
+                    graph_error = exc
+        self.touch_collector_event(ev.source, ev.ts)
+        if graph_error is not None:
+            raise GraphIngestError(str(graph_error)) from graph_error
+        return written
 
     # --- cấu hình xuất log (do người dùng chọn trong Cài đặt) ---
 
@@ -1415,10 +1606,14 @@ class Store:
                 # trước đọc được, không phải một con số độc lập có thể lệch.
                 "UPDATE alerts SET count=?,ts=?,last_seen=?,sources=?,evidence=?,"
                 "risk_score=MAX(risk_score,?),confidence=MAX(confidence,?),"
-                "evidence_strength=MAX(evidence_strength,?) WHERE id=?",
+                "evidence_strength=MAX(evidence_strength,?),"
+                # Confidence lấy lần đánh giá MỚI NHẤT, không MAX: nó phản ánh
+                # những gì DB biết lúc này, và một lượt sau có thể biết nhiều hơn.
+                "evidence_confidence=?,evidence_assessment=? WHERE id=?",
                 (count + 1, alert.ts, alert.ts, json.dumps(sorted(sources)),
                  json.dumps(alert.evidence), alert.risk_score,
-                 alert.evidence_strength, alert.evidence_strength, alert_id),
+                 alert.evidence_strength, alert.evidence_strength,
+                 alert.evidence_confidence, json.dumps(alert.evidence_assessment), alert_id),
             )
             self.conn.commit()
             # Mang theo khoá chính của dòng đã có. Không có bước này thì bên
@@ -1427,8 +1622,9 @@ class Store:
 
         self.conn.execute(
             "INSERT INTO alerts (ts, rule_id, severity, title, detail, subject, evidence, playbook, "
-            "risk_score,confidence,evidence_strength,policy_action,first_seen,last_seen,sources) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "risk_score,confidence,evidence_strength,policy_action,first_seen,last_seen,sources,"
+            "evidence_confidence,evidence_assessment) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 alert.ts,
                 alert.rule_id,
@@ -1445,6 +1641,8 @@ class Store:
                 alert.ts,
                 alert.ts,
                 json.dumps([source]),
+                alert.evidence_confidence,
+                json.dumps(alert.evidence_assessment),
             ),
         )
         # `last_insert_rowid()` thay cho `cursor.lastrowid`: kết nối ở đây đi qua
@@ -1459,12 +1657,15 @@ class Store:
 
         rows = self.conn.execute(
             "SELECT ts, rule_id, severity, title, detail, subject, evidence, playbook, count, "
-            "risk_score,confidence,policy_action,first_seen,last_seen,sources "
+            "risk_score,confidence,policy_action,first_seen,last_seen,sources,"
+            "evidence_confidence,evidence_assessment "
             "FROM alerts ORDER BY ts DESC LIMIT ?",
             (limit,),
         ).fetchall()
         out = []
-        for ts, rule_id, severity, title, detail, subject, evidence, playbook, count, risk_score, confidence, policy_action, first_seen, last_seen, sources in rows:
+        for (ts, rule_id, severity, title, detail, subject, evidence, playbook, count, risk_score,
+             confidence, policy_action, first_seen, last_seen, sources, evidence_confidence,
+             evidence_assessment) in rows:
             out.append(
                 {
                     "ts": ts,
@@ -1482,6 +1683,8 @@ class Store:
                     "first_seen": first_seen,
                     "last_seen": last_seen,
                     "source_count": len(json.loads(sources or "[]")),
+                    "evidence_confidence": int(evidence_confidence),
+                    "evidence_assessment": json.loads(evidence_assessment or "{}"),
                 }
             )
         return out
@@ -1873,6 +2076,87 @@ class Store:
         row = self.conn.execute("SELECT 1 FROM trusted WHERE mac=?", (mac,)).fetchone()
         return row is not None
 
+    # Cửa sổ nhìn lại cho fact lịch sử, và trần số dòng mỗi truy vấn: fact là
+    # "đã thấy hay chưa", không cần quét cả bảng để trả lời.
+    EVIDENCE_LOOKBACK_S = 3600.0
+    EVIDENCE_NEARBY_S = 600.0
+    EVIDENCE_ROW_LIMIT = 2000
+
+    def evidence_facts(self, alert: Alert) -> set[str]:
+        """Fact lịch sử cho mô hình Evidence Confidence (security/evidence_model).
+
+        Chỉ đọc, có cửa sổ thời gian và trần dòng, đi qua index (source, ts) /
+        (subject, rule_id). Một fact CHƯA THẤY không có nghĩa là "không xảy
+        ra" — nó hiện trong danh sách còn thiếu, đúng như vậy.
+        """
+        from shield.agent.detectors.mitm import BASELINE_GW_IP
+
+        facts: set[str] = set()
+        ev = alert.evidence or {}
+        since = alert.ts - self.EVIDENCE_LOOKBACK_S
+        source_ip = str(ev.get("src_ip") or "")
+
+        def journal_rows(kind: str) -> list[dict]:
+            rows = self.conn.execute(
+                "SELECT data FROM events WHERE source='journal' AND ts>=? AND kind=? "
+                "ORDER BY ts DESC LIMIT ?", (since, kind, self.EVIDENCE_ROW_LIMIT)).fetchall()
+            out = []
+            for (raw,) in rows:
+                try:
+                    data = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(data, dict):
+                    out.append(data)
+            return out
+
+        if alert.rule_id == "LOCAL_SSH_BRUTEFORCE" and source_ip:
+            logins = [d for d in journal_rows("ssh_login") if d.get("src_ip") == source_ip]
+            if logins:
+                facts.add("login_succeeded_from_source")
+            if any(d.get("user") == "root" for d in logins):
+                facts.add("privileged_session_from_source")
+        elif alert.rule_id == "SCAN_PORTSCAN" and source_ip:
+            if any(d.get("src_ip") == source_ip for d in journal_rows("ssh_failed_password")):
+                facts.add("followed_by_auth_attempts")
+        elif alert.rule_id in ("MITM_GATEWAY_MAC_CHANGED", "MITM_ARP_CONFLICT"):
+            observed = str(ev.get("observed_mac") or "").lower()
+            gateway = self.get_baseline(BASELINE_GW_IP)
+            if observed:
+                row = self.conn.execute(
+                    "SELECT ip FROM devices WHERE mac=?", (observed,)).fetchone()
+                if row and row[0] and row[0] != (gateway or ev.get("gateway_ip")):
+                    facts.add("mac_belongs_to_other_host")
+            if gateway and alert.subject == gateway:
+                facts.add("gateway_involved")
+            nearby = self.conn.execute(
+                "SELECT 1 FROM alerts WHERE rule_id IN ('DNS_RESOLVER_CHANGED','DNS_UNEXPECTED_SERVER') "
+                "AND ts BETWEEN ? AND ? LIMIT 1",
+                (alert.ts - self.EVIDENCE_NEARBY_S, alert.ts + self.EVIDENCE_NEARBY_S)).fetchone()
+            if nearby:
+                facts.add("dns_changed_nearby")
+        elif alert.rule_id in ("DNS_RESOLVER_CHANGED", "MITM_ROGUE_DHCP"):
+            def near(*rules: str) -> bool:
+                placeholders = ",".join("?" * len(rules))
+                return self.conn.execute(
+                    f"SELECT 1 FROM alerts WHERE rule_id IN ({placeholders}) AND ts BETWEEN ? AND ? LIMIT 1",
+                    (*rules, alert.ts - self.EVIDENCE_NEARBY_S, alert.ts + self.EVIDENCE_NEARBY_S),
+                ).fetchone() is not None
+
+            if alert.rule_id == "DNS_RESOLVER_CHANGED":
+                if near("MITM_ROGUE_DHCP"):
+                    facts.add("rogue_dhcp_nearby")
+                if near("MITM_GATEWAY_MAC_CHANGED", "MITM_ARP_CONFLICT"):
+                    facts.add("gateway_tampering_nearby")
+            else:
+                if near("DNS_RESOLVER_CHANGED", "DNS_UNEXPECTED_SERVER"):
+                    facts.add("dns_changed_nearby")
+                server = str(ev.get("rogue_dhcp") or "")
+                if server and self.conn.execute(
+                        "SELECT 1 FROM devices WHERE ip=? LIMIT 1", (server,)).fetchone():
+                    facts.add("rogue_server_on_lan")
+        return facts
+
     def risk_context(self, subject: str) -> dict:
         """Ngữ cảnh ngoài alert dùng để chấm điểm rủi ro (KE-HOACH-SHIELD-1.1
         mục B1): giá trị tài sản, mức tin cậy, số lần lặp lại, và verdict
@@ -2122,6 +2406,9 @@ class Store:
             self._append_forensic_record(ts, "audit", {"action_id": action_id, "params": params, "result": result})
 
     def _append_forensic_record(self, ts: float, category: str, payload: dict) -> str:
+        # Chuỗi chống giả mạo phải BỀN: ngay sau commit chứa bản ghi này, một
+        # commit nhỏ ở synchronous=FULL fsync file WAL (_ThreadSafeConnection).
+        self.conn.durable_commit()
         payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         row = self.conn.execute("SELECT entry_hash FROM forensic_ledger ORDER BY id DESC LIMIT 1").fetchone()
         prev_hash = row[0] if row else "0" * 64
@@ -2231,7 +2518,7 @@ class Store:
                 "DELETE FROM audit_snapshots WHERE ts < ?", (now_ts - snapshot_days * 86400,)
             ).rowcount
             intel = self.conn.execute("DELETE FROM threat_intel_cache WHERE expires_ts <= ?", (now_ts,)).rowcount
-        self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        self._compact("PASSIVE", vacuum=False)
         trimmed = 0
         self._size_cap_graph_pruned: dict = {}
         if database_max_bytes > 0:
@@ -2258,6 +2545,8 @@ class Store:
 
         with self.conn:
             ai_pruned = InvestigationAudit(self.conn).prune()
+        # Vùng xám: chỉ mục ĐÃ QUYẾT ĐỊNH quá hạn alert mới bị xoá.
+        GrayZoneStore(self.conn).prune(now_ts - alert_days * 86400)
         # CÒN VIỆC KHÔNG. Mỗi lượt bị chặn trần, nên "đã chạy xong một lượt"
         # không còn đồng nghĩa với "đã dọn xong". Vòng bảo trì đọc cờ này để
         # quay lại sớm thay vì ngủ tiếp sáu tiếng trong lúc database vẫn ở trên
@@ -2296,11 +2585,35 @@ class Store:
         luôn được quét vòng tròn, không có phần nào bị bỏ quên vĩnh viễn.
         """
         after = self.get_baseline(GRAPH_PRUNE_CURSOR_KEY) or ""
+        entity_after = self.get_baseline(GRAPH_ENTITY_CURSOR_KEY) or ""
         with self.conn:
             result = EvidenceGraph(self.conn).prune(
-                older_than_ts, max_edges=max_edges, after=after)
+                older_than_ts, max_edges=max_edges, after=after, entity_after=entity_after)
         self.set_baseline(GRAPH_PRUNE_CURSOR_KEY, result.get("next_cursor", ""))
+        self.set_baseline(GRAPH_ENTITY_CURSOR_KEY, result.get("next_entity_cursor", ""))
         return result
+
+    def _compact(self, checkpoint: str | None, *, vacuum: bool = True) -> None:
+        """Checkpoint WAL và trả trang tự do — TỐI ƯU, không bao giờ làm hỏng lượt bảo trì.
+
+        Máy thật, 29/09/2026, lượt bảo trì đầu tiên sau khi cài 3.0.0a4:
+        `PRAGMA wal_checkpoint(TRUNCATE)` ném `database table is locked`
+        (SQLITE_LOCKED: kết nối chung còn một câu lệnh dở dang) và cả lượt —
+        cùng integrity check và backup phía sau — bị bỏ. SQLite vẫn tự
+        checkpoint định kỳ, nên bỏ qua một lần là vô hại; hỏng cả lượt thì không.
+        """
+        if checkpoint:
+            for mode in dict.fromkeys((checkpoint, "PASSIVE")):
+                try:
+                    self.conn.execute(f"PRAGMA wal_checkpoint({mode})")
+                    break
+                except sqlite3.OperationalError as exc:
+                    logger.info("wal_checkpoint(%s) bị từ chối (%s); thử lại ở lượt sau", mode, exc)
+        if vacuum:
+            try:
+                self.conn.execute("PRAGMA incremental_vacuum")
+            except sqlite3.OperationalError as exc:
+                logger.info("incremental_vacuum bị từ chối (%s); thử lại ở lượt sau", exc)
 
     def _enforce_size_cap(self, maximum_bytes: int, batch: int = 50_000,
                           max_batches: int = SIZE_CAP_MAX_BATCHES) -> int:
@@ -2345,24 +2658,39 @@ class Store:
             # vòng bảo trì quay lại sau một phút.
             graph = self._prune_graph_slice()
             self._size_cap_graph_pruned = graph
-            if graph.get("edges_removed", 0) or graph.get("entities_removed", 0):
-                self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                self.conn.execute("PRAGMA incremental_vacuum")
+            # Chỉ ưu tiên graph khi graph CHỦ YẾU là rác. Bản trước bỏ qua cắt
+            # event hễ lát dọn gỡ được BẤT KỲ cạnh nào; máy thật 29/09/2026
+            # (sau khi cạnh giữ tham chiếu mới nhất) mỗi lát chỉ còn ~900/20.000
+            # cạnh mồ côi (4,6 %), event không bao giờ bị cắt nữa, và dung lượng
+            # dùng thật lên 2.515 MiB so với trần 2.048 MiB.
+            scanned = int(graph.get("edges_scanned", 0) or 0)
+            removed_edges = int(graph.get("edges_removed", 0) or 0)
+            if scanned and removed_edges / scanned >= GRAPH_FIRST_ORPHAN_RATIO:
+                self._compact("TRUNCATE")
                 break
-            with self.conn:
-                deleted = self.conn.execute(
-                    "DELETE FROM events WHERE id IN "
-                    "(SELECT id FROM events ORDER BY ts LIMIT ?)", (batch,)
-                ).rowcount
+            deleted = 0
+            # Chia nhỏ: mỗi đợt một transaction riêng, nhả khoá kết nối chung
+            # giữa các đợt để ping watchdog chen vào được. Đo trên DB thật: một
+            # câu xoá 50.000 event giữ khoá 2,1 giây; chia đợt 1.000 dòng: 0,04.
+            while deleted < batch:
+                with self.conn:
+                    step = self.conn.execute(
+                        "DELETE FROM events WHERE id IN "
+                        "(SELECT id FROM events ORDER BY ts LIMIT ?)",
+                        (min(SIZE_CAP_DELETE_CHUNK, batch - deleted),)
+                    ).rowcount
+                if not step:
+                    break
+                deleted += int(step)
             if not deleted:
                 break
             removed += deleted
             self._prune_graph_slice()
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._compact("TRUNCATE", vacuum=False)
             # Trả trang tự do về hệ điều hành nếu database này bật được
             # auto_vacuum (bản cài mới). Không bật thì đây là no-op, và trần
             # vẫn có tác dụng nhờ đo dung lượng logic.
-            self.conn.execute("PRAGMA incremental_vacuum")
+            self._compact(None)
         if removed:
             logger.warning(
                 "Cắt bớt %d event cũ nhất để giữ database dưới %d byte", removed, maximum_bytes)
@@ -2865,7 +3193,9 @@ class Store:
                 "INSERT OR IGNORE INTO incident_refs(incident_id,ref_kind,ref_id,ts) "
                 "VALUES(?,?,?,?)", (incident_id, kind, ref, ts))
 
-    _REASON_KINDS = {"rule_combination", "threshold_count"}
+    # 'analyst_promoted': một người đã nâng mục vùng xám lên incident. Không
+    # rule nào "tạo" ra nó; `rule_id` là rule của tín hiệu gốc.
+    _REASON_KINDS = {"rule_combination", "threshold_count", "analyst_promoted"}
 
     def _record_correlation_reason(self, incident_id: str, reason: dict, ts: float) -> None:
         """Ghi MỘT lý do gộp. Mọi trường đều là đầu vào luật hoặc số đo được.
@@ -3202,6 +3532,26 @@ class Store:
              "detail": row[4], "updated_ts": row[5]}
             for row in rows
         ]
+
+    STALE_HEALTH_S = 7 * 86400.0
+
+    def retire_stale_health(self, max_age_s: float = STALE_HEALTH_S) -> list[str]:
+        """Xoá dòng sức khoẻ không ai cập nhật quá `max_age_s`; trả về tên đã xoá.
+
+        Máy thật 29/09/2026: `arp_ndp_dhcp`, `dns_packet_monitor`,
+        `port_monitor` — collector scapy cũ đã bị gỡ khỏi lõi — vẫn hiện
+        "stopped" với heartbeat 31 ngày trước. Một thành phần đang sống ghi lại
+        dòng của nó ngay khi chạy, nên dòng cũ hơn một tuần là dòng mồ côi và
+        làm màn hình sức khoẻ nói sai.
+        """
+        cutoff = time.time() - max(3600.0, float(max_age_s))
+        stale = [row[0] for row in self.conn.execute(
+            "SELECT component FROM collector_health WHERE updated_ts < ? ORDER BY component",
+            (cutoff,)).fetchall()]
+        if stale:
+            with self.conn:
+                self.conn.execute("DELETE FROM collector_health WHERE updated_ts < ?", (cutoff,))
+        return stale
 
     def collector_health(self) -> list[dict]:
         rows = self.conn.execute(

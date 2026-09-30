@@ -5,10 +5,89 @@ and is not reproduced here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — internal package version `3.0.0a3`
+## [Unreleased] — internal package version `3.0.0a11`
+
+### Added
+
+- **Behavior Risk vs. Evidence Confidence** (phase 1): two scores per alert;
+  declarative evidence models for SSH brute force, port scan, gateway MAC change,
+  ARP conflict, DNS resolver change and rogue DHCP list observed and missing
+  evidence. DNS change and rogue DHCP corroborate each other when close in time.
+- Evidence-graph edges keep their first 8 evidence refs plus the 24 newest,
+  instead of only the first 32 (which had all expired on long-lived edges).
+- **Gray zone** (phase 2): near-misses, low-confidence and suppressed signals
+  are recorded for the analyst; only a person promotes (audited incident with an
+  `analyst_promoted` reason) or dismisses them.
+- **Raw log lines** (phase 3): journal, auditd, syslog and probe events keep
+  the original line, redacted and capped, next to the normalized event.
+- **Live workspace** (phase 4): up to ten filtered tabs with Live / Pause /
+  Search / Replay, groups discovered from telemetry, entity lifetime history.
+- Each phase passed `scripts/phase_gate.py`: acceptance tests pass on the phase
+  and fail on the commit before it, ruff, mypy, full suite at `ulimit -n 1024`.
+
+- `CapabilityBoundingSet` for `shield-agent` (14 capabilities, no
+  `CAP_SYS_ADMIN`/`CAP_SETUID`/`CAP_SYS_MODULE`), measured with
+  `scripts/verify-agent-capabilities.py` and the real eBPF probes.
+- `tests/test_response_e2e_netns.py`: response apply / verify / rollback
+  against real nftables with the real privileged helper.
+
+### Added
+
+- Detection validation: 20 attack scenarios (SSH brute force, port scan,
+  ARP/DNS/DHCP MITM, deleted executable, backdoor listener, USB, FIM,
+  privilege escalation, a multi-step recon→SSH chain, and two below-threshold
+  cases) replayed through the real agent pipeline — detectors, Risk/Evidence
+  Confidence scoring, gray zone and correlation. 20/20 detected;
+  `scripts/detection-scenarios.py` emits an evidence report.
+
+### Diagnostics
+
+- Structured `event key=value` log lines: `agent_starting` banner,
+  `heartbeat` every 10 min, `maintenance_pass` with per-step timings and DB
+  vs. cap, `alert` with rule/risk/confidence/subject/id.
+- The shared database lock is now tracked: `slow_sql`, `lock_held_long`,
+  `watchdog_ping_slow` (names who holds the lock and doing what) and
+  `event_loop_lag` make a watchdog kill self-explaining.
+- Repeated desktop-notification warnings collapse to one line per 10 minutes.
+- Millisecond timestamps and padded levels. See `docs/TROUBLESHOOTING.md`.
+
+### Performance
+
+- Event pipeline 12.8x faster on real data (8.99 -> 0.70 ms/event, 6,000 real
+  events on a copy of a 2.9 GB database): WAL with `synchronous=NORMAL`
+  (the forensic ledger still fsyncs), and one commit per event for the event
+  and its evidence graph.
 
 ### Fixed
 
+- **Agent killed by the watchdog during size-cap maintenance (found on 3.0.0a9).**
+  The graph orphan cleanup scanned the whole edge table three times per pass
+  (5.4 s each, holding the shared lock, thrashing the 1 GB cgroup's page
+  cache). Now cursor-bounded with index probes (pass 20.9 s -> 3.7 s) and
+  event trimming is chunked. Also: IPC client disconnects no longer log an
+  ERROR, and the Live workspace loads its groups on connect.
+- Live workspace tabs blinked: every event cleared and rebuilt the table
+  (130 times in 15 s on the live agent) and dropped the selected row.
+- Investigation screens were partly English in the Vietnamese UI; an i18n
+  audit now runs in the test suite.
+- Found on the installed 3.0.0a4 and fixed in 3.0.0a5: a refused WAL
+  checkpoint aborted a whole maintenance pass; the size cap stopped trimming
+  events while any orphan edge remained (2,515 MiB used vs. a 2,048 MiB cap);
+  stale health rows of removed collectors; an upgrade copied the database
+  twice; the traffic graph never rendered (missing `PySide6.QtOpenGL`); the
+  header showed the wrong version; workspace "NEW" badges and replay state.
+- **Port-scan detection went blind after an IP change.** The packet helper
+  read its local addresses once at startup from `/etc/hosts` and the
+  default route. It now reads every local address from the kernel and
+  refreshes every 30 s.
+- `tests/test_portscan_netns.py` called a function removed long ago and had
+  never run (root-gated); rewritten for the current helper -> ingest pipeline.
+- Journal, syslog and probe stored the verbatim `message` in normalized data
+  without secret redaction.
+- Near-misses could have been counted as detections by replay, assessment and
+  eval runners; they are filtered.
+- Automatic backups are pruned after the new copy is written (pruning first
+  left one extra copy and could remove a good backup early).
 - **Agent killed by the watchdog after the Beta 1.0 "fix".** Two causes, both
   reproduced on a copy of a 2.5 GB production database:
   - the daily backup and the full integrity check ran on the shared SQLite

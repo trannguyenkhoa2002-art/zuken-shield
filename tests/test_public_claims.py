@@ -58,6 +58,9 @@ def test_agent_capabilities_are_described_as_they_are():
     if not restricted:
         assert "restricted\n  capabilities" not in agent_paragraph
         assert "does **not** drop root capabilities" in agent_paragraph
+    else:
+        assert "CapabilityBoundingSet" in agent_paragraph
+        assert "does **not** drop root capabilities" not in agent_paragraph
 
 
 def test_unmeasured_numbers_are_not_advertised():

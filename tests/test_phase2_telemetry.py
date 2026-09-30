@@ -26,6 +26,7 @@ from shield.agent.collectors.ratelimit import RateLimiter
 from shield.agent.detectors.portscan import PortscanDetector
 from shield.common.models import Event
 from shield.evidence.resolver import resolve
+from shield.security.gray_zone import detections_only
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -267,7 +268,8 @@ def test_the_detection_latency_is_unchanged_measured_in_packets(tmp_path):
                         detector.handle_event(
                             Event(at, "conn_watch", seen_kind, seen_data))
                     continue
-            alerts = detector.handle_event(Event(at, "conn_watch", kind, data))
+            # Near-miss (vùng xám) không phải phát hiện: độ trễ đo tới alert THẬT.
+            alerts = detections_only(detector.handle_event(Event(at, "conn_watch", kind, data)))
             if alerts:
                 return index, alerts[-1].evidence["scan_type_key"]
         return None, ""

@@ -31,9 +31,41 @@ logger = logging.getLogger("shield.packet_helper")
 MAX_QUEUE = 2000
 
 
+FIB_TRIE = "/proc/self/net/fib_trie"
+ADDRESS_REFRESH_S = 30.0
+
+
+def addresses_from_fib_trie(text: str) -> set[str]:
+    """Mọi địa chỉ IPv4 CỤC BỘ trong bảng định tuyến của namespace này.
+
+    Dòng "/32 host LOCAL" đứng ngay sau dòng chứa địa chỉ đó. Đọc qua
+    /proc/self/net nên đúng namespace mạng của tiến trình.
+    """
+    found: set[str] = set()
+    previous = ""
+    for line in text.splitlines():
+        if "/32 host LOCAL" in line:
+            candidate = previous.strip().split()[-1] if previous.strip() else ""
+            if candidate.count(".") == 3:
+                found.add(candidate)
+        previous = line
+    return found
+
+
 def local_addresses() -> set[str]:
-    """Địa chỉ của chính máy này, đọc từ hệ điều hành. Không phụ thuộc scapy."""
+    """Địa chỉ của chính máy này, đọc từ hệ điều hành. Không phụ thuộc scapy.
+
+    Nguồn chính là bảng LOCAL của kernel (mọi interface: Wi-Fi, Ethernet, VPN,
+    docker0...). Hai cách cũ bên dưới chỉ còn là dự phòng: `gethostname` thường
+    ra 127.0.1.1 trên Ubuntu, còn mẹo kết nối UDP chỉ ra IP của interface có
+    default route — và cả hai đều không theo namespace mạng.
+    """
     found: set[str] = {"127.0.0.1"}
+    try:
+        with open(FIB_TRIE, encoding="utf-8") as handle:
+            found |= addresses_from_fib_trie(handle.read())
+    except OSError:
+        pass
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None):
             found.add(info[4][0])
@@ -46,6 +78,33 @@ def local_addresses() -> set[str]:
     except OSError:
         pass
     return found
+
+
+class AddressBook:
+    """Tập địa chỉ cục bộ, làm mới định kỳ.
+
+    Trước đây tập này được tính MỘT lần lúc khởi động: laptop đổi Wi-Fi hoặc
+    nhận IP mới từ DHCP thì mọi SYN tới IP mới bị bỏ qua, và port-scan detection
+    mù hoàn toàn, im lặng, cho tới khi helper khởi động lại. Luồng sniffer chỉ
+    ĐỌC `current`; phép gán một frozenset mới là nguyên tử nên không cần khoá.
+    """
+
+    def __init__(self, reader=local_addresses) -> None:
+        self._reader = reader
+        self.current: frozenset[str] = frozenset(reader())
+
+    def refresh(self) -> bool:
+        new = frozenset(self._reader())
+        changed = new != self.current
+        self.current = new
+        return changed
+
+
+async def refresh_addresses(book: AddressBook, interval_s: float = ADDRESS_REFRESH_S) -> None:
+    while True:
+        await asyncio.sleep(interval_s)
+        if book.refresh():
+            logger.info("Địa chỉ cục bộ đổi: %s", sorted(book.current))
 
 
 class Publisher:
@@ -122,8 +181,9 @@ async def main_async(args) -> int:
 
     publisher = Publisher()
     loop = asyncio.get_running_loop()
-    mine = local_addresses()
-    logger.info("Địa chỉ cục bộ: %s", sorted(mine))
+    book = AddressBook()
+    logger.info("Địa chỉ cục bộ: %s", sorted(book.current))
+    refresher = asyncio.create_task(refresh_addresses(book))
 
     sniffers = []
     if not args.no_arp:
@@ -131,7 +191,7 @@ async def main_async(args) -> int:
                                        from_arp_packet))
     if not args.no_conn:
         sniffers.append(_start_sniffer(loop, publisher, BPF_CONN, args.interface,
-                                       lambda pkt: from_tcp_packet(pkt, mine)))
+                                       lambda pkt: from_tcp_packet(pkt, book.current)))
     if not args.no_dns:
         sniffers.append(_start_sniffer(loop, publisher, BPF_DNS, args.interface,
                                        from_dns_packet))
@@ -150,6 +210,7 @@ async def main_async(args) -> int:
         async with server:
             await server.serve_forever()
     finally:
+        refresher.cancel()
         for sniffer in sniffers:
             with contextlib.suppress(Exception):
                 sniffer.stop()

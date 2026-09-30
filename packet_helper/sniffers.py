@@ -59,7 +59,7 @@ def from_arp_packet(pkt) -> tuple[str, dict] | None:
     return None
 
 
-def from_tcp_packet(pkt, local_addresses: set[str]) -> tuple[str, dict] | None:
+def from_tcp_packet(pkt, local_addresses: set[str] | frozenset[str]) -> tuple[str, dict] | None:
     from scapy.all import IP, TCP
 
     if not (pkt.haslayer(TCP) and pkt.haslayer(IP)):

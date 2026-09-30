@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 
 from shield.agent.bus import Bus
 from shield.agent.switch import allows
+from shield.common.secrets import redact_text
 from shield.common.models import Event, now
 from shield.security.trust import UNAUTHENTICATED
 
@@ -216,7 +217,8 @@ class SyslogCollector:
         if not self.limiter.allow(address):
             self.rejected_rate += 1
             return False
-        parsed = parse_syslog(payload.decode("utf-8", "replace"))
+        text = payload.decode("utf-8", "replace")
+        parsed = parse_syslog(text)
         if parsed is None:
             self.rejected_parse += 1
             return False
@@ -228,10 +230,16 @@ class SyslogCollector:
             ts=now(), source="syslog", kind="syslog_message",
             data={
                 **parsed,
+                # Bản chuẩn hoá cũng được che: trước đây `message` nguyên văn
+                # (có thể chứa mật khẩu gõ nhầm, token trong URL) đi thẳng vào DB.
+                "message": redact_text(str(parsed.get("message", ""))),
                 "source_ip": address,
                 "origin": f"syslog:{address}",
                 "trust": UNAUTHENTICATED,
             },
+            # Dòng syslog nguyên văn như thiết bị gửi. Nó KHÔNG xác thực: raw
+            # chỉ là bằng chứng "thiết bị/ai đó đã gửi đúng chuỗi này".
+            raw=text.rstrip("\r\n"),
         ))
         self.accepted += 1
         return True

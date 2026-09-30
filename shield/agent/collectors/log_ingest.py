@@ -27,6 +27,7 @@ import time
 
 from shield.agent.bus import Bus
 from shield.agent.switch import allows
+from shield.common.secrets import redact_text
 from shield.common.models import Event
 from shield.security.trust import AUTHENTICATED
 
@@ -97,7 +98,8 @@ def normalize_record(raw: dict, probe_id: str, remote_addr: str) -> Event | None
     for key, value in list(data.items())[:40]:
         key = str(key)[:48]
         if isinstance(value, str):
-            clean[key] = value[:MAX_MESSAGE_CHARS]
+            # Che TRƯỚC khi cắt, như dòng gốc (models.sanitize_raw).
+            clean[key] = redact_text(value)[:MAX_MESSAGE_CHARS]
         elif isinstance(value, (int, float, bool)) or value is None:
             clean[key] = value
     # origin/trust do SERVER gắn, không bao giờ lấy từ payload — nếu không,
@@ -106,7 +108,11 @@ def normalize_record(raw: dict, probe_id: str, remote_addr: str) -> Event | None
     clean["trust"] = AUTHENTICATED
     clean["probe_id"] = probe_id
     clean["probe_addr"] = remote_addr
-    return Event(ts=ts, source=source, kind=kind, data=clean)
+    # Dòng gốc probe đọc được trên máy của nó (tuỳ chọn). Chỉ nhận chuỗi; Event
+    # tự che bí mật và cắt độ dài (models.sanitize_raw).
+    original = raw.get("raw")
+    return Event(ts=ts, source=source, kind=kind, data=clean,
+                 raw=original if isinstance(original, str) else "")
 
 
 class LogIngestServer:

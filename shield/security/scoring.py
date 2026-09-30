@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from shield.common.models import Alert
+from shield.security.evidence_model import EvidenceConfidence, alert_facts, evaluate
 
 
 # Asset value. `criticality` is already collected per device identity in
@@ -93,6 +94,10 @@ class RiskAssessment:
     # Độ chính xác đã hiệu chuẩn của detector này, hoặc None nếu chưa đủ mẫu.
     # None nghĩa là KHÔNG BIẾT — không phải 0, và cũng không phải 0.5.
     detector_precision: float | None = None
+    # Evidence Confidence 0..100 cùng danh sách bằng chứng đã thấy / còn thiếu.
+    # Tách khỏi `score` (Behavior Risk): xem shield/security/evidence_model.py.
+    evidence_confidence: EvidenceConfidence = field(
+        default_factory=lambda: EvidenceConfidence(0, "generic"))
 
     @property
     def confidence(self) -> float:
@@ -122,7 +127,13 @@ class RiskScorer:
         # việc chấm điểm.
         self.calibration = calibration
 
-    def assess(self, alert: Alert, context: RiskContext | None = None) -> RiskAssessment:
+    def assess(self, alert: Alert, context: RiskContext | None = None,
+               store_facts: set[str] | frozenset[str] | None = None) -> RiskAssessment:
+        """`store_facts`: fact lịch sử chỉ DB mới biết (Store.evidence_facts).
+
+        Không truyền thì những fact đó được coi là CHƯA THẤY — đúng nghĩa đen,
+        không phải "không có": chúng hiện trong danh sách còn thiếu.
+        """
         context = context or RiskContext()
 
         # --- Severity: the base signal the detector itself asserted. ---
@@ -177,9 +188,13 @@ class RiskScorer:
             "threat": threat,
             "trust": trust_weight,
         }
+        trusted_for_facts = context.trusted or alert.evidence.get("trusted") is True
+        facts = alert_facts(alert, trusted=trusted_for_facts, repetition=context.repetition)
+        facts |= set(store_facts or ())
         return RiskAssessment(
             max(0, min(100, round(score))), round(confidence, 4), tuple(reasons), factors,
             detector_precision=self.precision_for(alert.rule_id),
+            evidence_confidence=evaluate(alert, facts, confidence),
         )
 
     def precision_for(self, rule_id: str) -> float | None:

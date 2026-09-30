@@ -14,6 +14,7 @@ import logging
 import re
 
 from shield.agent.bus import Bus
+from shield.common.secrets import redact_text
 from shield.common.models import Event, now
 from shield.agent.collectors.auditd import parse_audit_message
 
@@ -92,8 +93,9 @@ async def _handle_line(event_bus: Bus, raw: bytes) -> None:
                     ts=now(),
                     source="journal",
                     kind="ssh_login",
+                    raw=message,
                     data={"user": user, "src_ip": src_ip, "method": method,
-                          "src_port": int(port) if port else 0, "message": message},
+                          "src_port": int(port) if port else 0, "message": redact_text(message)},
                 )
             )
         return
@@ -106,7 +108,8 @@ async def _handle_line(event_bus: Bus, raw: bytes) -> None:
                     ts=now(),
                     source="journal",
                     kind="ssh_failed_password",
-                    data={"src_ip": m.group(1), "message": message},
+                    raw=message,
+                    data={"src_ip": m.group(1), "message": redact_text(message)},
                 )
             )
         return
@@ -120,7 +123,8 @@ async def _handle_line(event_bus: Bus, raw: bytes) -> None:
                 ts=now(),
                 source="journal",
                 kind="sudo_failed",
-                data={"user": m.group(1) if m else "unknown", "message": message},
+                    raw=message,
+                data={"user": m.group(1) if m else "unknown", "message": redact_text(message)},
             )
         )
         return
@@ -128,7 +132,8 @@ async def _handle_line(event_bus: Bus, raw: bytes) -> None:
     if identifier == "kernel":
         if "New USB device found" in message:
             await event_bus.publish(
-                Event(ts=now(), source="journal", kind="usb_new", data={"message": message})
+                Event(ts=now(), source="journal", kind="usb_new", data={"message": redact_text(message)},
+                      raw=message)
             )
             return
         m = _PROMISC_RE.search(message)
@@ -138,6 +143,7 @@ async def _handle_line(event_bus: Bus, raw: bytes) -> None:
                     ts=now(),
                     source="journal",
                     kind="promisc_mode",
-                    data={"interface": m.group(1), "message": message},
+                    raw=message,
+                    data={"interface": m.group(1), "message": redact_text(message)},
                 )
             )

@@ -62,28 +62,43 @@ MARKER = "SHIELD_RESULT "
 
 # Kịch bản chạy TRONG namespace: đúng đường ống production, không mô phỏng.
 HELPER = r'''
-import asyncio, json, socket, sys
+import asyncio, json, os, socket, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 from shield.agent.bus import Bus
-from shield.agent.collectors import conn_watch
+from shield.agent.collectors import conn_watch, packet_ingest
 from shield.agent.detectors.portscan import PortscanDetector
+from shield.security.gray_zone import detections_only
 
 REPO, MODE, PORTS, IFACE, VICTIM, READY, DONE, MARKER = sys.argv[1:9]
 ports = [int(p) for p in PORTS.split(",")]
 
 async def main():
+    # Đường ống production từ khi scapy tách khỏi lõi: helper bắt gói (tiến
+    # trình riêng) -> Unix socket -> packet_ingest -> aggregate_loop -> detector.
+    # Bản cũ của kịch bản này gọi `conn_watch.sniff_loop`, hàm đã bị gỡ; bài
+    # test luôn bị skip (cần root) nên không ai thấy nó hỏng.
     servers = []
     if MODE == "open":
         for port in ports:
             srv = socket.socket()
             srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             srv.bind((VICTIM, port)); srv.listen(8); servers.append(srv)
+    sock = str(Path(READY).parent / "packet-collector.sock")
+    helper = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "packet_helper", "--socket", sock, "--interface", IFACE,
+        "--no-arp", "--no-dns", cwd=REPO, env={**os.environ, "PYTHONPATH": REPO})
     bus = Bus(max_queue_size=8192, overflow_policy="drop_oldest")
     queue = bus.subscribe()
-    task = asyncio.create_task(conn_watch.sniff_loop(bus, interface=IFACE))
+    health = packet_ingest.PacketIngestHealth()
+    tasks = [asyncio.create_task(packet_ingest.ingest_loop(bus, socket_path=sock, health=health)),
+             asyncio.create_task(conn_watch.aggregate_loop(bus))]
     try:
-        await asyncio.sleep(2.5)
+        for _ in range(200):
+            if health.connected:
+                break
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(1.5)
         Path(READY).write_text("1")
         for _ in range(600):
             if Path(DONE).exists():
@@ -95,18 +110,20 @@ async def main():
         while not queue.empty():
             event = queue.get_nowait()
             kinds[event.kind] = kinds.get(event.kind, 0) + 1
-            for alert in detector.handle_event(event):
+            for alert in detections_only(detector.handle_event(event)):
                 alerts.append({"rule_id": alert.rule_id, "subject": alert.subject,
                                "ts": alert.ts, "evidence": alert.evidence})
         print(MARKER + json.dumps({"kinds": kinds, "alerts": alerts,
-                                   "bus": bus.stats()}), flush=True)
+                                   "bus": bus.stats(), "helper_connected": health.connected}), flush=True)
     finally:
         for srv in servers:
             try: srv.close()
             except OSError: pass
-        task.cancel()
-        try: await task
-        except BaseException: pass
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        helper.terminate()
+        await helper.wait()
 
 asyncio.run(main())
 '''
@@ -231,7 +248,10 @@ def observe_scan(ports, *, listeners: bool, hold_s: float = 0.0) -> dict:
                 if ready.exists() or proc.poll() is not None:
                     break
                 time.sleep(0.1)
-            assert ready.exists(), "Shield trong namespace không khởi động được"
+            if not ready.exists():
+                proc.kill()
+                out, err = proc.communicate(timeout=10)
+                raise AssertionError(f"Shield trong namespace không khởi động được\nstderr={err[-2000:]}")
             started = time.time()
             with FlagCensus() as census:
                 outcome = scan_from_host(ports, hold_s)
@@ -247,7 +267,10 @@ def observe_scan(ports, *, listeners: bool, hold_s: float = 0.0) -> dict:
         assert line, f"không có kết quả từ namespace\nstdout={stdout}\nstderr={stderr[-2000:]}"
         result = json.loads(line[len(MARKER):])
         result.update({"outcome": dict(outcome), "to_victim": dict(to_victim),
-                       "to_scanner": dict(to_scanner), "started": started})
+                       "to_scanner": dict(to_scanner), "started": started,
+                       # Helper/ingest ghi log ra stderr: khi không thấy event nào,
+                       # đây là bằng chứng duy nhất cho biết đường ống gãy ở đâu.
+                       "stderr_tail": stderr[-1500:]})
         return result
 
 
@@ -321,7 +344,7 @@ def test_a_real_connect_scan_is_detected(namespace):
     ports = list(range(OPEN_BASE, OPEN_BASE + SCAN_PORTS))
     result = observe_scan(ports, listeners=True, hold_s=0.05)
     report("connect-scan 20 cổng MỞ", result)
-    assert result["kinds"].get("tcp_syn", 0) >= SCAN_PORTS, result["kinds"]
+    assert result["kinds"].get("tcp_syn", 0) >= SCAN_PORTS, (result["kinds"], result.get("helper_connected"), result.get("stderr_tail"))
     assert result["alerts"], "20 cổng trong 1,6 giây mà không có cảnh báo"
     alert = result["alerts"][-1]
     assert alert["rule_id"] == "SCAN_PORTSCAN"
@@ -357,7 +380,7 @@ def test_a_real_syn_scan_is_detected_and_labelled_syn(namespace):
     result = observe_scan(ports, listeners=False)
     report("SYN-scan 20 cổng ĐÓNG", result)
     assert result["outcome"].get("connected", 0) == 0, result["outcome"]
-    assert result["kinds"].get("tcp_syn", 0) >= SCAN_PORTS, result["kinds"]
+    assert result["kinds"].get("tcp_syn", 0) >= SCAN_PORTS, (result["kinds"], result.get("helper_connected"), result.get("stderr_tail"))
     assert result["alerts"]
     alert = result["alerts"][-1]
     assert alert["subject"] == SCANNER_IP

@@ -1,6 +1,6 @@
 # Zuken Shield — User and Operations Guide
 
-**Created by Zuken** · Version `3.0.0a3` · [Bản tiếng Việt](HUONG_DAN_SU_DUNG.md)
+**Created by Zuken** · Version `3.0.0a11` · [Bản tiếng Việt](HUONG_DAN_SU_DUNG.md)
 
 This is the complete guide: what Shield does, how to install and run it, how to
 work an alert, how to operate it in production, and how to test it before a
@@ -72,7 +72,7 @@ audit-only, a score at or above the threshold, and the exact rule in an allowlis
 
 ```bash
 cd ~/Desktop/"zuken shield"
-sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a11_amd64.deb
 ```
 
 APT may need Internet access for missing system dependencies. Shield's own Python
@@ -82,13 +82,13 @@ code installs offline into `/opt/shield/.venv` and never touches PyPI.
 
 ```bash
 ./packaging/build-deb.sh
-sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a11_amd64.deb
 ```
 
 Rebuilding without a version bump needs `--reinstall`:
 
 ```bash
-sudo apt install --reinstall ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install --reinstall ./dist/shield-monitor_3.0.0a11_amd64.deb
 ```
 
 ### Verify
@@ -99,7 +99,7 @@ systemctl status shield-agent shield-privileged --no-pager
 journalctl -u shield-agent -n 50 --no-pager
 ```
 
-Expect `install ok installed 3.0.0a3`, both services `active`, and startup lines
+Expect `install ok installed 3.0.0a11`, both services `active`, and startup lines
 naming the collectors, database path and IPC socket. The installer runs its own
 health check and exits non-zero with logs if the services do not come up.
 
@@ -851,6 +851,47 @@ are stored, and they are discarded when the evidence they describe changes.
 
 ---
 
+## 12e. Investigation: risk vs. confidence, gray zone, live workspace
+
+### Behavior risk and evidence confidence are two numbers
+
+Every alert carries **Behavior risk** (how dangerous the behavior is if it is
+real) and **Evidence confidence** (how well Shield's observations support it),
+both 0–100. For rules with an evidence model — SSH brute force, port scan,
+gateway MAC change, ARP conflict, DNS resolver change, rogue DHCP — the alert detail lists what was observed and
+what is **missing**, for example "Successful login from the same source". Rules
+without a model show a generic estimate marked with `*`; Shield does not invent
+a missing-evidence list for them. Neither number ever marks an attack as
+confirmed.
+
+### The gray zone
+
+**Operations → Gray zone** lists suspicious signals that are not yet incidents:
+near-misses below a detector threshold (3 of 5 SSH failures, 8 of 15 ports),
+modelled alerts with risk ≥ 40 but confidence < 70, and alerts muted by a
+suppression. Only you decide: *Promote to incident* (recorded as
+"promoted from the gray zone by an analyst") or *Dismiss* with a note. Both are
+audited with your user and process. Thresholds: `SHIELD_GRAY_MIN_RISK`,
+`SHIELD_CONFIRM_MIN_CONFIDENCE`.
+
+### Raw log lines next to normalized events
+
+Events from journal, auditd, syslog and probes keep the original line
+(secrets redacted, at most `SHIELD_RAW_LOG_MAX_CHARS`, default 2048; `0`
+disables it). Expert Evidence shows it next to the normalized fields. Events
+synthesised from `/proc` or eBPF have no original line and the viewer says so.
+
+### Live workspace
+
+**Investigation → Live workspace** runs up to ten log tabs side by side. Each
+tab has its own filter (kind, source, IP, MAC, user, process, PID, port, or
+text over raw and normalized data) and its own **Live / Pause / Search /
+Replay**. Pausing holds new events and shows how many were held or dropped.
+Groups on the left are discovered from your telemetry — event kinds, IPs, MACs,
+users, processes — and new ones are marked. Replaying an IP, MAC or user shows
+its whole retained history through the evidence graph, not only the last seven
+days. The workspace never creates alerts or incidents.
+
 ## 13. Testing and release gates
 
 Unit tests are unprivileged and safe on a workstation:
@@ -916,14 +957,14 @@ If `shield` is missing from your session's groups, log out and back in.
 **`No module named shield`** — the private virtualenv did not finish installing:
 
 ```bash
-sudo apt install --reinstall ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install --reinstall ./dist/shield-monitor_3.0.0a11_amd64.deb
 /opt/shield/.venv/bin/python -c 'import shield; print(shield.__version__)'
 ```
 
 **Installation incomplete or dependencies failed**
 
 ```bash
-sudo apt install ./dist/shield-monitor_3.0.0a3_amd64.deb
+sudo apt install ./dist/shield-monitor_3.0.0a11_amd64.deb
 sudo dpkg --configure -a
 ```
 

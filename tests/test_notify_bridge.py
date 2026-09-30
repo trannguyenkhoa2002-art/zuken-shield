@@ -154,3 +154,38 @@ def test_the_user_unit_is_packaged_and_enabled():
     assert "systemctl --global enable shield-notify.service" in postinst
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'shield-notify = "shield.notify_bridge:main"' in pyproject
+
+
+def test_a_client_that_vanishes_mid_read_does_not_log_an_error(caplog):
+    """Máy thật 30/09/2026: client ngắt đột ngột -> `readline()` ném BrokenPipeError,
+    chỉ ConnectionResetError được bắt, asyncio ghi ERROR 'Unhandled exception in
+    client_connected_cb'."""
+    import logging
+    import socket
+
+    async def scenario(sock):
+        server = IpcServer(sock)
+        await server.start()
+        raw = socket.socket(socket.AF_UNIX)
+        raw.connect(str(sock))
+        await asyncio.sleep(0.2)                 # server đã đăng ký client
+        raw.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, __import__("struct").pack("ii", 1, 0))
+        raw.close()                              # ngắt đột ngột
+        # Server ghi tiếp vào client đã đi: drain lỗi, và asyncio lưu exception đó
+        # vào reader — lần `readline()` kế tiếp ném BrokenPipeError.
+        for _ in range(5):
+            await server.broadcast("evidence_event", {"pad": "x" * 65536})
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.3)
+        await server.close()
+
+    with tempfile.TemporaryDirectory() as directory, caplog.at_level(logging.ERROR):
+        asyncio.run(scenario(Path(directory) / "shield.sock"))
+    assert "Unhandled exception" not in caplog.text, caplog.text
+
+
+def test_the_workspace_asks_for_groups_on_connect_and_says_it_is_loading():
+    source = (ROOT / "shield/ui/__main__.py").read_text(encoding="utf-8")
+    body = source[source.index("    def on_connection_status"):source.index("    def on_connection_status") + 900]
+    assert "self.workspace_tab.refresh_groups()" in body
+    assert "workspace.loading_groups" in source
