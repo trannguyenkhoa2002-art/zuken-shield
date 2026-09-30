@@ -7,7 +7,7 @@
 # hai con số cho cùng một sản phẩm. Giao diện đọc file này nên nó hiển thị
 # "ver 1.1 RC" suốt cả hai vòng phát hành 2.0 — người dùng nhìn vào app và
 # thấy một phiên bản không tồn tại.
-__version__ = "3.0.0a10"
+__version__ = "3.0.0a11"
 
 
 def _display(version: str) -> str:
